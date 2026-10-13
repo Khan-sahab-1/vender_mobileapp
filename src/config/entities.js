@@ -356,26 +356,6 @@ export const ENTITIES = {
     ],
   },
 
-  roles: {
-    key: 'roles',
-    endpoint: '/roles',
-    title: 'Roles',
-    singular: 'Role',
-    icon: '🛡️',
-    primaryField: 'name',
-    secondaryField: 'description',
-    fields: [
-      { name: 'name', label: 'Name', type: 'text', required: true },
-      { name: 'description', label: 'Description', type: 'textarea' },
-      {
-        name: 'permissions',
-        label: 'Permissions (comma separated)',
-        type: 'text-array',
-        placeholder: 'products:read, products:write',
-      },
-    ],
-  },
-
   users: {
     key: 'users',
     endpoint: '/users',
@@ -395,7 +375,6 @@ export const ENTITIES = {
         createOnly: true, // hidden when editing
       },
       { name: 'phone', label: 'Phone', type: 'text' },
-      { name: 'roleId', label: 'Role', type: 'relation', relation: 'roles' },
     ],
   },
   divisions: {
@@ -834,7 +813,7 @@ export const SETTINGS_MENU = [
   },
   {
     title: 'Users & Access',
-    data: ['users', 'roles'],
+    data: ['users'],
   },
 ];
 

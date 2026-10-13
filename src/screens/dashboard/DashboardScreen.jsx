@@ -38,7 +38,7 @@ const COMING_SOON = [
     key: 'Settings',
     icon: '⚙️',
     title: 'Settings',
-    subtitle: 'Customers, vendors, taxes, users & roles',
+    subtitle: 'Customers, vendors, taxes & users',
     screen: 'Settings',
   },
 ];
@@ -151,11 +151,10 @@ export default function DashboardScreen({ navigation }) {
   const { user } = useAuth();
   const fullName = user?.name?.trim() || '';
   const firstName = fullName ? fullName.split(' ')[0] : 'there';
-
-  
+  const companyName =
+    (typeof user?.company === 'object' ? user?.company?.name : user?.company) || '';
 
   return (
-    
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.ink} />
       <ScrollView
@@ -166,9 +165,8 @@ export default function DashboardScreen({ navigation }) {
         <View style={styles.header}>
           <Text style={styles.greeting}>
             {greetingForNow()},{'\n'}
-            {firstName}
+            {firstName} {companyName ? <Text style={styles.companyName}>({companyName})</Text> : null}
           </Text>
-          {/* <Text style={styles.subheading}>What would you like to work on?</Text> */}
         </View>
 
         {/* Body */}
@@ -211,6 +209,11 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     fontWeight: '800',
     letterSpacing: -0.6,
+  },
+  companyName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#CBD5E1',
   },
   subheading: {
     color: C.onInkMuted,

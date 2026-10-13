@@ -60,9 +60,18 @@ export default function PickerModal({
         });
         records = fallback.data ?? [];
       }
+      if (params?.excludeId) {
+        records = records.filter(r => r.id !== params.excludeId);
+      }
       setItems(
         records.map(record => {
-          const baseName = record[entity.primaryField] ?? record.name ?? record.id;
+          const secondary = entity.secondaryField;
+          const baseName =
+            record.completeName ||
+            record[entity.primaryField] ||
+            (secondary ? record[secondary] : null) ||
+            record.name ||
+            record.id;
           const prefix = record.code || record.codePrefix;
           const label = prefix && prefix !== baseName ? `[${prefix}] ${baseName}` : baseName;
           return {

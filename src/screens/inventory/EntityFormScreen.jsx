@@ -113,14 +113,20 @@ export default function EntityFormScreen({ route, navigation }) {
         <ErrorBanner message={error} />
 
         <View style={styles.formCard}>
-          {visibleFields.map(field => (
-            <FormField
-              key={field.name}
-              field={field}
-              value={values[field.name]}
-              onChange={val => setFieldValue(field.name, val)}
-            />
-          ))}
+          {visibleFields.map(field => {
+            const fieldProps =
+              isEdit && field.relation === entityKey
+                ? { ...field, params: { ...(field.params || {}), excludeId: id } }
+                : field;
+            return (
+              <FormField
+                key={field.name}
+                field={fieldProps}
+                value={values[field.name]}
+                onChange={val => setFieldValue(field.name, val)}
+              />
+            );
+          })}
         </View>
 
         <View style={styles.buttonGroup}>

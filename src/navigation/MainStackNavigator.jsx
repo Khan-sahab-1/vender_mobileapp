@@ -27,6 +27,8 @@ import VendorBillDetailScreen from '../screens/purchase/VendorBillDetailScreen';
 import AccountingMenuScreen from '../screens/accounting/AccountingMenuScreen';
 import SalesOrdersListScreen from '../screens/sales/SalesOrdersListScreen';
 import SalesOrderDetailScreen from '../screens/sales/SalesOrderDetailScreen';
+import UsersListScreen from '../screens/settings/UsersListScreen';
+import UserFormScreen from '../screens/settings/UserFormScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -136,6 +138,18 @@ export default function MainStackNavigator() {
         name="Settings"
         component={Settings}
         options={{ title: 'Settings' }}
+      />
+      <Stack.Screen
+        name="UsersList"
+        component={UsersListScreen}
+        options={{ title: 'Users & Access' }}
+      />
+      <Stack.Screen
+        name="UserForm"
+        component={UserFormScreen}
+        options={({ route }) => ({
+          title: route.params?.user ? 'Edit User' : 'New User',
+        })}
       />
       <Stack.Screen
         name="PurchaseOrder"

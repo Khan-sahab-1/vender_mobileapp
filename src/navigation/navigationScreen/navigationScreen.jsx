@@ -6,4 +6,6 @@ export const navigationScreen = {
   VENDORS_BILLS: 'VendorsBills',
   VENDOR_BILL_DETAIL: 'VendorBillDetail',
   VENDOR_LEDGER: 'VendorLedger',
+  USERS_LIST: 'UsersList',
+  USER_FORM: 'UserForm',
 };

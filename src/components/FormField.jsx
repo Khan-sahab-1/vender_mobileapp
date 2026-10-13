@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Switch, TouchableOpacity, StyleSheet } from 'react-native';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { colors, radius, spacing, typography } from '../theme/theme';
 import PickerModal from './PickerModal';
 import ChipsField from './ChipsField';
 import ArrayField from './ArrayField';
+import { createCrudApi } from '../api/crud';
+import { getEntity } from '../config/entities';
 
 function FocusedTextInput({ multiline, style, ...props }) {
   const [focused, setFocused] = useState(false);
@@ -155,27 +157,7 @@ export default function FormField({ field, value, onChange }) {
     }
 
     case 'relation':
-      return (
-        <Labeled field={field}>
-          <TouchableOpacity
-            style={styles.selectInput}
-            onPress={() => setPickerOpen(true)}
-            activeOpacity={0.7}>
-            <Text style={value?.label ? styles.selectValue : styles.selectPlaceholder}>
-              {value?.label ?? `Select ${field.label.toLowerCase()}...`}
-            </Text>
-            <Text style={styles.chevron}>›</Text>
-          </TouchableOpacity>
-          <PickerModal
-            visible={pickerOpen}
-            onClose={() => setPickerOpen(false)}
-            onSelect={item => onChange({ id: item.value, label: item.label })}
-            title={field.label}
-            relation={field.relation}
-            params={field.params}
-          />
-        </Labeled>
-      );
+      return <RelationField field={field} value={value} onChange={onChange} />;
 
     case 'multiselect-relation':
       return (
@@ -231,6 +213,63 @@ export default function FormField({ field, value, onChange }) {
     default:
       return null;
   }
+}
+
+function RelationField({ field, value, onChange }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [resolvedLabel, setResolvedLabel] = useState(value?.label);
+
+  useEffect(() => {
+    const isRawId = value?.id && (!value?.label || value.label === value.id);
+    if (isRawId && field.relation) {
+      const entity = getEntity(field.relation);
+      if (entity) {
+        const api = createCrudApi(entity.endpoint);
+        api.get(value.id).then(record => {
+          if (record) {
+            const secondary = entity.secondaryField;
+            const label =
+              record.completeName ||
+              record[entity.primaryField] ||
+              (secondary ? record[secondary] : null) ||
+              record.name ||
+              value.id;
+            setResolvedLabel(label);
+            onChange({ id: value.id, label });
+          }
+        }).catch(() => {});
+      }
+    } else {
+      setResolvedLabel(value?.label);
+    }
+  }, [value?.id, value?.label, field.relation]);
+
+  const displayLabel = resolvedLabel || (value?.label !== value?.id ? value?.label : null);
+
+  return (
+    <Labeled field={field}>
+      <TouchableOpacity
+        style={styles.selectInput}
+        onPress={() => setPickerOpen(true)}
+        activeOpacity={0.7}>
+        <Text style={displayLabel ? styles.selectValue : styles.selectPlaceholder}>
+          {displayLabel ?? `Select ${field.label.toLowerCase()}...`}
+        </Text>
+        <Text style={styles.chevron}>›</Text>
+      </TouchableOpacity>
+      <PickerModal
+        visible={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={item => {
+          setResolvedLabel(item.label);
+          onChange({ id: item.value, label: item.label });
+        }}
+        title={field.label}
+        relation={field.relation}
+        params={field.params}
+      />
+    </Labeled>
+  );
 }
 
 function Labeled({ field, children }) {

@@ -7,7 +7,7 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi } from '../api/auth';
-import { setOnUnauthorized } from '../api/client';
+import client, { setOnUnauthorized } from '../api/client';
 import { STORAGE_KEYS } from '../config/config';
 
 const AuthContext = createContext(null);
@@ -25,7 +25,26 @@ export function AuthProvider({ children }) {
           STORAGE_KEYS.USER,
         ]);
         if (token[1] && storedUser[1]) {
-          setUser(JSON.parse(storedUser[1]));
+          const parsed = JSON.parse(storedUser[1]);
+          setUser(parsed);
+
+          // Fetch fresh user profile in background to sync latest access rights
+          try {
+            const { data } = await client.get('/users/me');
+            if (data) {
+              const updated = {
+                ...parsed,
+                ...data,
+                role: data.role?.name || data.role || parsed.role,
+                company: data.company?.name || data.company || parsed.company,
+                accessRights: data.accessRights || parsed.accessRights,
+              };
+              setUser(updated);
+              await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updated));
+            }
+          } catch {
+            // Keep parsed user if offline
+          }
         }
       } finally {
         setIsLoading(false);

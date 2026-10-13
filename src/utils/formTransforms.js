@@ -13,7 +13,8 @@ function relatedLabel(relationKey, record) {
   if (!record) return String(record ?? '');
   const relatedEntity = getEntity(relationKey);
   const primary = relatedEntity?.primaryField ?? 'name';
-  return record[primary] ?? record.id;
+  const secondary = relatedEntity?.secondaryField;
+  return record.completeName || record[primary] || (secondary ? record[secondary] : null) || record.name || record.id;
 }
 
 /** Builds the initial form state (keyed by field.name) from an API record, or defaults for a new record. */

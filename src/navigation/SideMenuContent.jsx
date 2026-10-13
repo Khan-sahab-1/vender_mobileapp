@@ -20,12 +20,32 @@ const MENU_ITEMS = [
   { icon: '🛒', label: 'Sales (SO)', screen: 'SalesOrdersList' },
   { icon: '🧾', label: 'Purchase', screen: 'Purchasedashboard' },
   { icon: '📊', label: 'Accounting', screen: 'AccountingMenu' },
+  { icon: '👥', label: 'Users & Access', screen: 'UsersList' },
   { icon: '⚙️', label: 'Settings', screen: 'Settings' },
 ];
 
 export default function SideMenuContent({ closeDrawer }) {
   const { user, logout } = useAuth();
   const [syncing, setSyncing] = useState(false);
+
+  const isManagement = Boolean(
+    user?.isAdmin ||
+    user?.role === 'admin' ||
+    user?.role === 'company_admin' ||
+    user?.role === 'management' ||
+    user?.userType === 'company_admin' ||
+    (user?.accessRights &&
+      Object.values(user.accessRights).some(
+        val => String(val).toLowerCase() === 'management',
+      )),
+  );
+
+  const visibleMenuItems = MENU_ITEMS.filter(item => {
+    if (item.screen === 'UsersList' && !isManagement) {
+      return false;
+    }
+    return true;
+  });
 
   const goTo = (screen, params) => {
     closeDrawer();
@@ -98,7 +118,8 @@ export default function SideMenuContent({ closeDrawer }) {
           <Text style={styles.avatarText}>{initials}</Text>
         </View>
         <Text style={styles.userName} numberOfLines={1}>
-          {user?.name || 'Business User'}
+          {user?.name || 'Business User'}{' '}
+          {user?.company ? `(${typeof user.company === 'object' ? user.company.name : user.company})` : ''}
         </Text>
         <Text style={styles.userEmail} numberOfLines={1}>
           {user?.email || 'user@example.com'}
@@ -114,7 +135,7 @@ export default function SideMenuContent({ closeDrawer }) {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.sectionHeader}>Navigation</Text>
         <View style={styles.menu}>
-          {MENU_ITEMS.map(item => (
+          {visibleMenuItems.map(item => (
             <TouchableOpacity
               key={item.label}
               style={styles.menuItem}
