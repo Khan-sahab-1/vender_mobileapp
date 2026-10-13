@@ -785,19 +785,20 @@ export const ACCOUNTING_MENU = [
   'account-journals',
   'taxes',
   'payment-terms',
+  'pricelists'
 ];
 
 /** Modules shown on the Settings hub screen, in display order. */
 export const SETTINGS_MENU = [
   {
-    title: 'Invoicing & Accounting Master Data',
-    data: [
-      'bank-accounts',
-      'account-types',
-      'account-groups',
-      'account-accounts',
-      'account-journals',
-    ],
+    // title: 'Invoicing & Accounting Master Data',
+    // data: [
+    //   'bank-accounts',
+    //   'account-types',
+    //   'account-groups',
+    //   'account-accounts',
+    //   'account-journals',
+    // ],
   },
   {
     title: 'Organization & Structure',
@@ -807,10 +808,10 @@ export const SETTINGS_MENU = [
     title: 'Business Partners',
     data: ['partners', 'customers', 'vendors'],
   },
-  {
-    title: 'Financial Settings',
-    data: ['taxes', 'payment-terms', 'pricelists'],
-  },
+  // {
+  //   title: 'Financial Settings',
+  //   data: ['taxes', 'payment-terms', 'pricelists'],
+  // },
   {
     title: 'Users & Access',
     data: ['users'],
