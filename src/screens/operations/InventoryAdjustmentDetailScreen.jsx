@@ -1,21 +1,36 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, View, Text, TextInput, Alert, StyleSheet } from 'react-native';
+import {
+  ScrollView,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Alert,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
 import ScreenContainer from '../../components/ScreenContainer';
 import Button from '../../components/Button';
 import StateBadge from '../../components/StateBadge';
+import PickerModal from '../../components/PickerModal';
 import { LoadingOverlay, ErrorBanner } from '../../components/Feedback';
 import { inventoryAdjustmentsApi } from '../../api/stock';
 import { getErrorMessage } from '../../api/client';
-import { colors, radius, spacing, typography } from '../../theme/theme';
+import { useAuth } from '../../context/AuthContext';
+import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 
-export default function InventoryAdjustmentDetailScreen({ route }) {
+export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   const { id } = route.params;
+  const { user } = useAuth();
   const [adjustment, setAdjustment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [draftCounts, setDraftCounts] = useState({});
   const [savingLineId, setSavingLineId] = useState(null);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [showAddLineModal, setShowAddLineModal] = useState(false);
+  const [addLineBusy, setAddLineBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -43,6 +58,10 @@ export default function InventoryAdjustmentDetailScreen({ route }) {
   }, [load]);
 
   const isDraft = adjustment?.state === 'draft';
+  const isInProgress = adjustment?.state === 'in_progress';
+  const isDone = adjustment?.state === 'done';
+  const isCancelled = adjustment?.state === 'cancelled';
+  const isEditable = isDraft || isInProgress;
 
   const saveLine = async lineId => {
     const value = draftCounts[lineId];
@@ -50,7 +69,16 @@ export default function InventoryAdjustmentDetailScreen({ route }) {
     setSavingLineId(lineId);
     try {
       await inventoryAdjustmentsApi.updateLine(id, lineId, { countedQuantity: Number(value) });
-      await load();
+      // Update in local state without full reload to prevent focus jump
+      setAdjustment(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          lines: prev.lines.map(l =>
+            l.id === lineId ? { ...l, countedQuantity: Number(value) } : l,
+          ),
+        };
+      });
     } catch (e) {
       Alert.alert("Couldn't save count", getErrorMessage(e));
     } finally {
@@ -58,63 +86,158 @@ export default function InventoryAdjustmentDetailScreen({ route }) {
     }
   };
 
+  const handleStart = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await inventoryAdjustmentsApi.start(id);
+      await load();
+    } catch (e) {
+      Alert.alert("Couldn't start inventory", getErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleValidate = () => {
-    const uncounted = (adjustment.lines ?? []).filter(
+    const lines = adjustment.lines ?? [];
+    const uncounted = lines.filter(
       l => draftCounts[l.id] === '' || draftCounts[l.id] === undefined,
     );
+
     const proceed = async () => {
       setBusy(true);
       setError(null);
       try {
         await inventoryAdjustmentsApi.validate(id);
         await load();
+        Alert.alert(
+          'Inventory Validated',
+          'Stock moves created and physical on-hand balances successfully updated!',
+        );
       } catch (e) {
-        Alert.alert("Couldn't validate", getErrorMessage(e));
+        Alert.alert("Couldn't validate inventory", getErrorMessage(e));
       } finally {
         setBusy(false);
       }
     };
-    if (uncounted.length) {
+
+    if (uncounted.length > 0) {
       Alert.alert(
-        'Incomplete Count',
-        `${uncounted.length} line(s) have no counted quantity and will be skipped. Continue?`,
+        'Incomplete Physical Count',
+        `${uncounted.length} item(s) have no counted quantity entered. Proceeding will treat them as zero quantity. Continue?`,
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Validate Anyway', onPress: proceed },
+          { text: 'Review Counts', style: 'cancel' },
+          { text: 'Validate Anyway', style: 'destructive', onPress: proceed },
         ],
       );
     } else {
-      proceed();
+      Alert.alert(
+        'Validate Inventory Adjustment',
+        'This will create corrective stock moves and permanently update product on-hand quantities. Continue?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Validate', onPress: proceed },
+        ],
+      );
     }
   };
 
-  const handleCancel = () =>
-    Alert.alert('Cancel this adjustment?', 'This cannot be undone.', [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Yes, Cancel',
-        style: 'destructive',
-        onPress: async () => {
-          setBusy(true);
-          try {
-            await inventoryAdjustmentsApi.cancel(id);
-            await load();
-          } catch (e) {
-            Alert.alert("Couldn't cancel", getErrorMessage(e));
-          } finally {
-            setBusy(false);
-          }
+  const handleCancel = () => {
+    Alert.alert(
+      'Cancel Inventory Adjustment?',
+      'Are you sure you want to cancel this count? This cannot be undone.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await inventoryAdjustmentsApi.cancel(id);
+              await load();
+            } catch (e) {
+              Alert.alert("Couldn't cancel", getErrorMessage(e));
+            } finally {
+              setBusy(false);
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
+  };
+
+  const handleAddProductLine = async item => {
+    setShowAddLineModal(false);
+    if (!item?.value) return;
+    setAddLineBusy(true);
+    try {
+      await inventoryAdjustmentsApi.addLine(id, { productId: item.value });
+      await load();
+    } catch (e) {
+      Alert.alert("Couldn't add product", getErrorMessage(e));
+    } finally {
+      setAddLineBusy(false);
+    }
+  };
+
+  const adjustQty = (lineId, delta) => {
+    const current = Number(draftCounts[lineId] || 0);
+    const updated = Math.max(0, current + delta);
+    setDraftCounts(prev => ({ ...prev, [lineId]: String(updated) }));
+    setSavingLineId(lineId);
+    inventoryAdjustmentsApi
+      .updateLine(id, lineId, { countedQuantity: updated })
+      .then(() => {
+        setAdjustment(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            lines: prev.lines.map(l =>
+              l.id === lineId ? { ...l, countedQuantity: updated } : l,
+            ),
+          };
+        });
+      })
+      .catch(e => Alert.alert("Couldn't save count", getErrorMessage(e)))
+      .finally(() => setSavingLineId(null));
+  };
 
   if (loading || !adjustment) {
     return (
       <ScreenContainer>
-        <LoadingOverlay full label="Loading adjustment details..." />
+        <LoadingOverlay full label="Loading inventory adjustment details..." />
       </ScreenContainer>
     );
   }
+
+  // Calculate summary counts
+  const lines = adjustment.lines || [];
+  let discrepancyCount = 0;
+  let gainCount = 0;
+  let lossCount = 0;
+
+  lines.forEach(l => {
+    const countedVal = draftCounts[l.id];
+    if (countedVal !== '' && countedVal !== undefined) {
+      const diff = Number(countedVal) - Number(l.theoreticalQuantity ?? 0);
+      if (diff > 0) gainCount++;
+      else if (diff < 0) lossCount++;
+      if (diff !== 0) discrepancyCount++;
+    }
+  });
+
+  const filteredLines = searchFilter.trim()
+    ? lines.filter(l => {
+        const query = searchFilter.toLowerCase();
+        return (
+          l.product?.name?.toLowerCase().includes(query) ||
+          l.product?.sku?.toLowerCase().includes(query) ||
+          l.product?.barcode?.toLowerCase().includes(query)
+        );
+      })
+    : lines;
 
   return (
     <ScreenContainer>
@@ -124,34 +247,322 @@ export default function InventoryAdjustmentDetailScreen({ route }) {
         showsVerticalScrollIndicator={false}>
         <ErrorBanner message={error} />
 
-        {/* Summary Card */}
-        <View style={styles.headerCard}>
-          <View style={styles.headerTop}>
-            <Text style={styles.name}>{adjustment.name || 'Stock Adjustment'}</Text>
-            <StateBadge state={adjustment.state} />
+        {/* State Pipeline Indicator */}
+        <View style={styles.pipelineCard}>
+          <View style={styles.pipelineSteps}>
+            <View
+              style={[
+                styles.stepItem,
+                (isDraft || isInProgress || isDone) && styles.stepActive,
+              ]}>
+              <View
+                style={[
+                  styles.stepCircle,
+                  (isDraft || isInProgress || isDone) && styles.stepCircleActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.stepNumber,
+                    (isDraft || isInProgress || isDone) && styles.stepNumberActive,
+                  ]}>
+                  1
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.stepLabel,
+                  (isDraft || isInProgress || isDone) && styles.stepLabelActive,
+                ]}>
+                Draft
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.stepConnector,
+                (isInProgress || isDone) && styles.stepConnectorActive,
+              ]}
+            />
+
+            <View
+              style={[
+                styles.stepItem,
+                (isInProgress || isDone) && styles.stepActive,
+              ]}>
+              <View
+                style={[
+                  styles.stepCircle,
+                  (isInProgress || isDone) && styles.stepCircleActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.stepNumber,
+                    (isInProgress || isDone) && styles.stepNumberActive,
+                  ]}>
+                  2
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.stepLabel,
+                  (isInProgress || isDone) && styles.stepLabelActive,
+                ]}>
+                In Progress
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.stepConnector,
+                isDone && styles.stepConnectorActive,
+              ]}
+            />
+
+            <View style={[styles.stepItem, isDone && styles.stepActive]}>
+              <View style={[styles.stepCircle, isDone && styles.stepCircleActive]}>
+                <Text style={[styles.stepNumber, isDone && styles.stepNumberActive]}>
+                  3
+                </Text>
+              </View>
+              <Text style={[styles.stepLabel, isDone && styles.stepLabelActive]}>
+                Done
+              </Text>
+            </View>
           </View>
-          {adjustment.notes ? <Text style={styles.notes}>{adjustment.notes}</Text> : null}
         </View>
 
-        {/* Lines Section */}
+        {/* Header Details Card */}
+        <View style={styles.headerCard}>
+          <View style={styles.headerTop}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.refText}>
+                {adjustment.reference || adjustment.name || 'Adjustment'}
+              </Text>
+              <Text style={styles.dateText}>
+                Date: {adjustment.inventoryDate || 'Today'}
+              </Text>
+            </View>
+            <StateBadge state={adjustment.state} />
+          </View>
+
+          <View style={styles.infoGrid}>
+            <View style={styles.infoCol}>
+              <Text style={styles.infoLabel}>Warehouse</Text>
+              <Text style={styles.infoVal}>
+                {adjustment.warehouse?.name || 'Default Warehouse'}
+              </Text>
+            </View>
+            <View style={styles.infoCol}>
+              <Text style={styles.infoLabel}>Inventoried Location</Text>
+              <Text style={styles.infoVal}>
+                {adjustment.location?.completeName ||
+                  adjustment.location?.name ||
+                  'Internal Location'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.infoGrid, { marginTop: spacing.sm }]}>
+            <View style={styles.infoCol}>
+              <Text style={styles.infoLabel}>Inventory Type</Text>
+              <Text style={styles.infoVal}>
+                {adjustment.inventoryType === 'stock_journal'
+                  ? 'Stock Journal'
+                  : 'Stock Inventory'}
+              </Text>
+            </View>
+            <View style={styles.infoCol}>
+              <Text style={styles.infoLabel}>Inventory Of</Text>
+              <Text style={styles.infoVal}>
+                {adjustment.inventoryOf === 'category'
+                  ? `Category: ${adjustment.category?.name || 'Category'}`
+                  : adjustment.inventoryOf === 'product'
+                  ? `Product: ${adjustment.product?.name || 'Product'}`
+                  : adjustment.inventoryOf === 'lot'
+                  ? `Lot: ${adjustment.lotNumber || 'Lot'}`
+                  : 'All Products'}
+              </Text>
+            </View>
+          </View>
+
+          {adjustment.notes ? (
+            <View style={styles.notesWrap}>
+              <Text style={styles.infoLabel}>Notes</Text>
+              <Text style={styles.notesText}>{adjustment.notes}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Action Controls */}
+        <View style={styles.actionsCard}>
+          {isDraft && (
+            <View style={styles.actionRow}>
+              <Button
+                title="Start Inventory"
+                onPress={handleStart}
+                loading={busy}
+                size="lg"
+                style={{ flex: 1, marginRight: spacing.sm }}
+              />
+              <Button
+                title="Cancel"
+                variant="ghost"
+                onPress={handleCancel}
+                disabled={busy}
+              />
+            </View>
+          )}
+
+          {isInProgress && (
+            <View>
+              <View style={styles.actionRow}>
+                <Button
+                  title="Validate Inventory"
+                  onPress={handleValidate}
+                  loading={busy}
+                  size="lg"
+                  style={[styles.validateBtn, { flex: 1, marginRight: spacing.sm }]}
+                />
+                <Button
+                  title="+ Add Line"
+                  variant="outline"
+                  onPress={() => setShowAddLineModal(true)}
+                  disabled={busy || addLineBusy}
+                />
+              </View>
+              <TouchableOpacity
+                onPress={handleCancel}
+                disabled={busy}
+                style={styles.cancelLink}>
+                <Text style={styles.cancelLinkText}>Cancel Adjustment</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {isDone && (
+            <View style={styles.doneNotice}>
+              <Text style={styles.doneIcon}>✓</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.doneTitle}>Inventory Validated</Text>
+                <Text style={styles.doneDesc}>
+                  Stock moves have booked all variances and on-hand quantities are now up to date.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {isCancelled && (
+            <View style={styles.cancelledNotice}>
+              <Text style={styles.cancelledText}>
+                This inventory adjustment was cancelled.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Count Summary Metrics */}
+        <View style={styles.metricsRow}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricVal}>{lines.length}</Text>
+            <Text style={styles.metricLabel}>Total Items</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text
+              style={[
+                styles.metricVal,
+                discrepancyCount > 0 && { color: colors.amber },
+              ]}>
+              {discrepancyCount}
+            </Text>
+            <Text style={styles.metricLabel}>Discrepancies</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text
+              style={[
+                styles.metricVal,
+                gainCount > 0 && { color: colors.success },
+              ]}>
+              +{gainCount}
+            </Text>
+            <Text style={styles.metricLabel}>Surplus (Gain)</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text
+              style={[
+                styles.metricVal,
+                lossCount > 0 && { color: colors.danger },
+              ]}>
+              -{lossCount}
+            </Text>
+            <Text style={styles.metricLabel}>Deficit (Loss)</Text>
+          </View>
+        </View>
+
+        {/* Lines Header & Search Filter */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Count Lines</Text>
+          <Text style={styles.sectionTitle}>Physical Inventory Count</Text>
           <Text style={styles.sectionCount}>
-            {adjustment.lines?.length ?? 0} {adjustment.lines?.length === 1 ? 'line' : 'lines'}
+            {filteredLines.length} of {lines.length} items
           </Text>
         </View>
 
-        {(adjustment.lines ?? []).map(line => {
+        {lines.length > 5 && (
+          <View style={styles.searchBox}>
+            <TextInput
+              value={searchFilter}
+              onChangeText={setSearchFilter}
+              placeholder="Filter products by name or SKU..."
+              placeholderTextColor={colors.textMuted}
+              style={styles.searchInput}
+            />
+            {searchFilter ? (
+              <TouchableOpacity onPress={() => setSearchFilter('')}>
+                <Text style={styles.clearSearch}>✕</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
+
+        {/* Empty lines indicator for draft */}
+        {lines.length === 0 && isDraft && (
+          <View style={styles.emptyLinesBox}>
+            <Text style={styles.emptyLinesIcon}>📋</Text>
+            <Text style={styles.emptyLinesTitle}>Inventory Not Started Yet</Text>
+            <Text style={styles.emptyLinesDesc}>
+              Tap &quot;Start Inventory&quot; to auto-populate all products in the selected scope with their system on-hand balance.
+            </Text>
+            <Button
+              title="Start Inventory Now"
+              onPress={handleStart}
+              loading={busy}
+              style={{ marginTop: spacing.md }}
+            />
+          </View>
+        )}
+
+        {/* Lines List */}
+        {filteredLines.map(line => {
           const counted = draftCounts[line.id];
           const hasCount = counted !== '' && counted !== undefined;
           const theoretical = Number(line.theoreticalQuantity ?? 0);
-          const difference = hasCount ? Number(counted) - theoretical : null;
+          const difference = hasCount ? Number(counted) - theoretical : 0;
 
           return (
-            <View key={line.id} style={styles.lineCard}>
-              <View style={styles.lineTop}>
-                <Text style={styles.lineProduct}>{line.product?.name}</Text>
-                {hasCount ? (
+            <View key={line.id} style={[styles.lineCard, shadows.sm]}>
+              <View style={styles.lineHeader}>
+                <View style={{ flex: 1, marginRight: spacing.sm }}>
+                  <Text style={styles.lineProductName}>
+                    {line.product?.name || 'Unnamed Product'}
+                  </Text>
+                  {line.product?.sku ? (
+                    <Text style={styles.lineProductSku}>
+                      SKU: {line.product.sku}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* Variance Badge */}
+                {hasCount && (
                   <View
                     style={[
                       styles.diffBadge,
@@ -164,73 +575,86 @@ export default function InventoryAdjustmentDetailScreen({ route }) {
                         styles.diffText,
                         difference > 0 && styles.diffSurplusText,
                         difference < 0 && styles.diffLossText,
+                        difference === 0 && styles.diffZeroText,
                       ]}>
                       {difference > 0 ? `+${difference}` : difference}
                     </Text>
                   </View>
-                ) : null}
+                )}
               </View>
 
-              <Text style={styles.lineLocation}>
-                {line.warehouse?.name ?? line.location?.completeName ?? line.location?.name ?? 'Default Location'}
-              </Text>
-
-              <View style={styles.statsRow}>
-                <View style={styles.statBox}>
-                  <Text style={styles.statLabel}>System (On Hand)</Text>
-                  <Text style={styles.statValue}>{theoretical}</Text>
+              {/* Counts comparison row */}
+              <View style={styles.lineCountsRow}>
+                {/* System On-Hand */}
+                <View style={styles.countColumn}>
+                  <Text style={styles.countColumnLabel}>System On Hand</Text>
+                  <Text style={styles.countColumnVal}>{theoretical}</Text>
                 </View>
 
-                <View style={styles.statBox}>
-                  <Text style={styles.statLabel}>Physical Count</Text>
-                  {isDraft ? (
-                    <TextInput
-                      value={counted}
-                      onChangeText={text =>
-                        setDraftCounts(prev => ({
-                          ...prev,
-                          [line.id]: text.replace(/[^0-9.-]/g, ''),
-                        }))
-                      }
-                      onBlur={() => saveLine(line.id)}
-                      keyboardType="numeric"
-                      placeholder="Enter count"
-                      placeholderTextColor={colors.textMuted}
-                      selectionColor={colors.primary}
-                      style={styles.countInput}
-                    />
+                {/* Arrow */}
+                <Text style={styles.countArrow}>➔</Text>
+
+                {/* Counted Physical */}
+                <View style={styles.countColumn}>
+                  <Text style={styles.countColumnLabel}>Physical Counted</Text>
+                  {isEditable ? (
+                    <View style={styles.inputWrap}>
+                      <TouchableOpacity
+                        style={styles.qtyStepBtn}
+                        onPress={() => adjustQty(line.id, -1)}>
+                        <Text style={styles.qtyStepText}>-</Text>
+                      </TouchableOpacity>
+
+                      <TextInput
+                        value={counted}
+                        onChangeText={text =>
+                          setDraftCounts(prev => ({
+                            ...prev,
+                            [line.id]: text.replace(/[^0-9.-]/g, ''),
+                          }))
+                        }
+                        onBlur={() => saveLine(line.id)}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={colors.textMuted}
+                        style={styles.countInput}
+                      />
+
+                      <TouchableOpacity
+                        style={styles.qtyStepBtn}
+                        onPress={() => adjustQty(line.id, 1)}>
+                        <Text style={styles.qtyStepText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
                   ) : (
-                    <Text style={styles.statValue}>{counted || '—'}</Text>
+                    <Text style={styles.countColumnVal}>{counted || '0'}</Text>
                   )}
                 </View>
               </View>
 
               {savingLineId === line.id ? (
-                <Text style={styles.savingHint}>Saving count...</Text>
+                <View style={styles.savingRow}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.savingText}>Saving count...</Text>
+                </View>
               ) : null}
             </View>
           );
         })}
-
-        {/* Actions */}
-        {isDraft && (
-          <View style={styles.actionSection}>
-            <Button
-              title="Validate Adjustment"
-              onPress={handleValidate}
-              loading={busy}
-              size="lg"
-            />
-            <Button
-              title="Cancel Adjustment"
-              onPress={handleCancel}
-              loading={busy}
-              variant="ghost"
-              style={styles.cancelBtn}
-            />
-          </View>
-        )}
       </ScrollView>
+
+      {/* Add Product Line Picker Modal */}
+      <PickerModal
+        visible={showAddLineModal}
+        onClose={() => setShowAddLineModal(false)}
+        onSelect={handleAddProductLine}
+        title="Add Product to Inventory"
+        relation="products"
+        params={{
+          companyId: adjustment?.companyId || user?.companyId,
+          strict: true,
+        }}
+      />
     </ScreenContainer>
   );
 }
@@ -239,6 +663,64 @@ const styles = StyleSheet.create({
   scroll: {
     padding: spacing.md,
     paddingBottom: spacing.xxl * 2,
+  },
+  pipelineCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  pipelineSteps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stepItem: {
+    alignItems: 'center',
+  },
+  stepCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  stepCircleActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  stepNumber: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  stepNumberActive: {
+    color: colors.surface,
+  },
+  stepLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  stepLabelActive: {
+    color: colors.text,
+    fontWeight: '700',
+  },
+  stepConnector: {
+    flex: 1,
+    height: 2,
+    backgroundColor: colors.border,
+    marginHorizontal: spacing.xs,
+    marginBottom: 16,
+  },
+  stepConnectorActive: {
+    backgroundColor: colors.primary,
   },
   headerCard: {
     backgroundColor: colors.surface,
@@ -251,35 +733,194 @@ const styles = StyleSheet.create({
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    marginBottom: spacing.sm + 2,
   },
-  name: {
-    ...typography.h2,
+  refText: {
+    ...typography.h3,
     color: colors.text,
+  },
+  dateText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  infoGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  infoCol: {
     flex: 1,
     marginRight: spacing.sm,
   },
-  notes: {
-    ...typography.body,
+  infoLabel: {
+    ...typography.caption,
     color: colors.textMuted,
-    marginTop: spacing.xs,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    fontSize: 11,
+  },
+  infoVal: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  notesWrap: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  notesText: {
+    ...typography.caption,
+    color: colors.text,
+    marginTop: 2,
+  },
+  actionsCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  validateBtn: {
+    backgroundColor: colors.success || '#057A60',
+  },
+  cancelLink: {
+    alignSelf: 'center',
+    marginTop: spacing.sm,
+    paddingVertical: 4,
+  },
+  cancelLinkText: {
+    ...typography.caption,
+    color: colors.danger,
+    fontWeight: '600',
+  },
+  doneNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E7F9F2',
+    padding: spacing.sm + 2,
+    borderRadius: radius.sm,
+  },
+  doneIcon: {
+    fontSize: 20,
+    color: '#057A60',
+    fontWeight: 'bold',
+    marginRight: spacing.sm,
+  },
+  doneTitle: {
+    ...typography.label,
+    color: '#057A60',
+    fontWeight: '700',
+  },
+  doneDesc: {
+    ...typography.caption,
+    color: '#057A60',
+    marginTop: 2,
+  },
+  cancelledNotice: {
+    backgroundColor: colors.dangerSoft,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+  },
+  cancelledText: {
+    ...typography.body,
+    color: colors.danger,
+    fontWeight: '600',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    alignItems: 'center',
+    marginHorizontal: 3,
+  },
+  metricVal: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '700',
+  },
+  metricLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 2,
+    textAlign: 'center',
   },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.sm,
-    paddingHorizontal: 2,
   },
   sectionTitle: {
-    ...typography.tiny,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    ...typography.h3,
+    color: colors.text,
+    fontSize: 16,
   },
   sectionCount: {
     ...typography.caption,
     color: colors.textMuted,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    height: 38,
+    ...typography.body,
+    color: colors.text,
+  },
+  clearSearch: {
+    fontSize: 14,
+    color: colors.textMuted,
+    padding: 6,
+  },
+  emptyLinesBox: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  emptyLinesIcon: {
+    fontSize: 32,
+    marginBottom: spacing.sm,
+  },
+  emptyLinesTitle: {
+    ...typography.h3,
+    color: colors.text,
+    marginBottom: 4,
+  },
+  emptyLinesDesc: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
   },
   lineCard: {
     backgroundColor: colors.surface,
@@ -289,86 +930,125 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm + 2,
   },
-  lineTop: {
+  lineHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  lineProduct: {
-    ...typography.h3,
-    color: colors.text,
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  lineLocation: {
-    ...typography.caption,
-    color: colors.textMuted,
+    alignItems: 'flex-start',
     marginBottom: spacing.sm,
   },
-  statsRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.sm,
-    padding: spacing.sm + 2,
+  lineProductName: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.text,
   },
-  statBox: {
-    flex: 1,
-  },
-  statLabel: {
+  lineProductSku: {
     ...typography.caption,
     color: colors.textMuted,
-    marginBottom: 4,
-    fontSize: 11,
-  },
-  statValue: {
-    ...typography.h3,
-    color: colors.text,
-  },
-  countInput: {
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    color: colors.text,
-    ...typography.bodyBold,
+    marginTop: 2,
   },
   diffBadge: {
-    borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
+    borderRadius: radius.sm,
   },
   diffSurplus: {
-    backgroundColor: colors.secondarySoft,
+    backgroundColor: '#E7F9F2',
   },
   diffSurplusText: {
     color: '#057A60',
+    fontWeight: '700',
+    fontSize: 12,
   },
   diffLoss: {
-    backgroundColor: colors.dangerSoft,
+    backgroundColor: '#FFEAEA',
   },
   diffLossText: {
     color: '#B42323',
+    fontWeight: '700',
+    fontSize: 12,
   },
   diffZero: {
     backgroundColor: colors.surfaceSubtle,
   },
-  diffText: {
-    ...typography.captionBold,
+  diffZeroText: {
+    color: colors.textMuted,
+    fontWeight: '600',
     fontSize: 12,
   },
-  savingHint: {
+  diffText: {
     ...typography.caption,
-    color: colors.primary,
+  },
+  lineCountsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  countColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  countColumnLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  countColumnVal: {
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  countArrow: {
+    fontSize: 14,
+    color: colors.textMuted,
+    marginHorizontal: spacing.xs,
+  },
+  inputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  qtyStepBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyStepText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  countInput: {
+    width: 52,
+    height: 32,
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    textAlign: 'center',
+    fontWeight: '700',
+    color: colors.text,
+    marginHorizontal: 4,
+    padding: 0,
+  },
+  savingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
     marginTop: spacing.xs,
   },
-  actionSection: {
-    marginTop: spacing.md,
-  },
-  cancelBtn: {
-    marginTop: spacing.sm,
+  savingText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontSize: 11,
+    marginLeft: 4,
   },
 });

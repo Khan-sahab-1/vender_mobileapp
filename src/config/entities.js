@@ -90,6 +90,23 @@ export const ENTITIES = {
       { name: 'sku', label: 'SKU / Internal Reference', type: 'text' },
       { name: 'barcode', label: 'Barcode', type: 'text' },
       {
+        name: 'tracking',
+        label: 'Tracking (Traceability)',
+        type: 'select',
+        options: [
+          { value: 'none', label: 'No Tracking' },
+          { value: 'lot', label: 'By Lots' },
+          { value: 'serial', label: 'By Unique Serial Number' },
+        ],
+        default: 'none',
+      },
+      {
+        name: 'lotNumber',
+        label: 'Lot / Serial Number',
+        type: 'text',
+        placeholder: 'e.g. LOT-2026-001 or SN-88231',
+      },
+      {
         name: 'type',
         label: 'Product Type',
         type: 'select',
@@ -150,7 +167,7 @@ export const ENTITIES = {
     key: 'customers',
     endpoint: '/partners',
     defaultParams: { isCustomer: true },
-    defaultValues: { isCustomer: true, isVendor: false, companyType: 'company' },
+    defaultValues: { isCustomer: true, isVendor: false, companyType: 'company', companyStructure: 'pvt_ltd' },
     title: 'Customers',
     singular: 'Customer',
     icon: '🧑‍💼',
@@ -163,7 +180,7 @@ export const ENTITIES = {
     key: 'vendors',
     endpoint: '/partners',
     defaultParams: { isVendor: true },
-    defaultValues: { isCustomer: false, isVendor: true, companyType: 'company' },
+    defaultValues: { isCustomer: false, isVendor: true, companyType: 'company', companyStructure: 'pvt_ltd' },
     title: 'Vendors',
     singular: 'Vendor',
     icon: '🚚',
@@ -401,7 +418,22 @@ export const ENTITIES = {
     primaryField: 'name',
     secondaryField: 'type',
     fields: [
-      { name: 'name', label: 'Type Name', type: 'text', required: true, placeholder: 'e.g. Receivable, Payable, Bank and Cash' },
+      { name: 'name', label: 'Type Name', type: 'text', required: true, placeholder: 'e.g. Asset, Liability, Income, Expense, Receivable' },
+      {
+        name: 'internalGroup',
+        label: 'Primary Head (Internal Group)',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'asset', label: 'Asset (Primary)' },
+          { value: 'liability', label: 'Liability (Primary)' },
+          { value: 'income', label: 'Income (Primary)' },
+          { value: 'expense', label: 'Expense (Primary)' },
+          { value: 'equity', label: 'Equity' },
+          { value: 'off_balance', label: 'Off-Balance Sheet' },
+        ],
+        default: 'asset',
+      },
       {
         name: 'type',
         label: 'Type Category',
@@ -419,7 +451,6 @@ export const ENTITIES = {
         name: 'includeInitialBalance',
         label: 'Include Initial Balance',
         type: 'boolean',
-        hidden: true,
         default: true,
       },
       { name: 'notes', label: 'Notes', type: 'textarea', placeholder: 'Optional description or notes' },
@@ -628,6 +659,15 @@ const PARTNER_FIELDS = [
     default: 'pvt_ltd',
   },
   {
+    name: 'parentId',
+    label: 'Company',
+    type: 'relation',
+    relation: 'customers',
+    params: { companyType: 'company', strict: true },
+    placeholder: 'Select company for this individual...',
+    description: 'Select the company this individual contact belongs to',
+  },
+  {
     name: 'isCustomer',
     label: 'Is a Customer',
     type: 'boolean',
@@ -726,7 +766,6 @@ const PARTNER_FIELDS = [
     default: 'INR',
     placeholder: 'e.g. INR, USD',
   },
-  { name: 'creditLimit', label: 'Credit Limit', type: 'number', default: 0 },
 
   // 5. Contact & Address Details
   {
@@ -782,7 +821,6 @@ export const ACCOUNTING_MENU = [
   'account-accounts',
   'account-groups',
   'account-types',
-  'account-journals',
   'taxes',
   'payment-terms',
   'pricelists'
@@ -806,7 +844,7 @@ export const SETTINGS_MENU = [
   },
   {
     title: 'Business Partners',
-    data: ['partners', 'customers', 'vendors'],
+    data: ['customers', 'vendors'],
   },
   // {
   //   title: 'Financial Settings',

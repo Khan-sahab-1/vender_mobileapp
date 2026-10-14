@@ -16,9 +16,20 @@ export const setOnUnauthorized = fn => {
 };
 
 client.interceptors.request.use(async config => {
-  const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
+  const [token, userJson] = await Promise.all([
+    AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
+    AsyncStorage.getItem(STORAGE_KEYS.USER),
+  ]);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (userJson) {
+    try {
+      const user = JSON.parse(userJson);
+      if (user?.companyId) {
+        config.headers['x-company-id'] = user.companyId;
+      }
+    } catch (_) {}
   }
   return config;
 });

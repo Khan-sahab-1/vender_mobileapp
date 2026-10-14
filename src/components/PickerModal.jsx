@@ -50,8 +50,19 @@ export default function PickerModal({
       };
       const res = await api.list(queryParams);
       let records = res.data ?? [];
-      // If filtered query yields 0 items, fallback to unfiltered records
-      if (records.length === 0 && params && Object.keys(params).length > 0) {
+      // If filtered query yields 0 items and searching for companyType, fallback to /partners with companyType
+      if (records.length === 0 && params?.companyType) {
+        try {
+          const partnerApi = createCrudApi('/partners');
+          const fallbackRes = await partnerApi.list({
+            page: 1,
+            limit: 100,
+            search: search || undefined,
+            companyType: params.companyType,
+          });
+          records = fallbackRes.data ?? [];
+        } catch (_) {}
+      } else if (records.length === 0 && params && Object.keys(params).length > 0 && !params?.strict) {
         const fallback = await api.list({
           page: 1,
           limit: 100,

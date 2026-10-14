@@ -25,6 +25,7 @@ import PurchaseOrderform from '../screens/purchase/PurchaseOrderform';
 import Venderbills from '../screens/purchase/Venderbills';
 import VendorBillDetailScreen from '../screens/purchase/VendorBillDetailScreen';
 import AccountingMenuScreen from '../screens/accounting/AccountingMenuScreen';
+import ChartOfAccountsScreen from '../screens/accounting/ChartOfAccountsScreen';
 import SalesOrdersListScreen from '../screens/sales/SalesOrdersListScreen';
 import SalesOrderDetailScreen from '../screens/sales/SalesOrderDetailScreen';
 import UsersListScreen from '../screens/settings/UsersListScreen';
@@ -180,6 +181,11 @@ export default function MainStackNavigator() {
         name={navigationScreen.VENDOR_BILL_DETAIL}
         component={VendorBillDetailScreen}
         options={{ title: 'Vendor Bill' }}
+      />
+      <Stack.Screen
+        name={navigationScreen.CHART_OF_ACCOUNTS}
+        component={ChartOfAccountsScreen}
+        options={{ title: 'Chart of Accounts' }}
       />
      
     </Stack.Navigator>

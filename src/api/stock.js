@@ -55,6 +55,14 @@ export const stockPickingsApi = {
 const baseAdjustments = createCrudApi('/inventory-adjustments');
 export const inventoryAdjustmentsApi = {
   ...baseAdjustments,
+  start: async id => {
+    const { data } = await client.post(`/inventory-adjustments/${id}/start`);
+    return data;
+  },
+  addLine: async (id, payload) => {
+    const { data } = await client.post(`/inventory-adjustments/${id}/lines`, payload);
+    return data;
+  },
   updateLine: async (id, lineId, payload) => {
     const { data } = await client.patch(
       `/inventory-adjustments/${id}/lines/${lineId}`,

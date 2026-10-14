@@ -28,6 +28,7 @@ const DEFAULT_ACCOUNTING_MODULES = [
     title: 'Chart of Accounts',
     icon: '📚',
     subtitle: 'General ledger codes & types',
+    screen: navigationScreen.CHART_OF_ACCOUNTS,
   },
   {
     key: 'account-groups',
@@ -40,12 +41,6 @@ const DEFAULT_ACCOUNTING_MODULES = [
     title: 'Account Types',
     icon: '🏷️',
     subtitle: 'Regular, Receivable, Payable, Liquidity',
-  },
-  {
-    key: 'account-journals',
-    title: 'Accounting Journals',
-    icon: '📒',
-    subtitle: 'Bill, Inv, Bank & Cash journal definitions',
   },
   {
     key: 'taxes',
@@ -70,12 +65,15 @@ const DEFAULT_ACCOUNTING_MODULES = [
 export default function AccountingMenuScreen({ navigation }) {
   const keys = Array.isArray(ACCOUNTING_MENU) && ACCOUNTING_MENU.length > 0
     ? ACCOUNTING_MENU
-    : ['account-accounts', 'account-groups', 'account-types', 'account-journals', 'taxes', 'payment-terms'];
+    : ['account-accounts', 'account-groups', 'account-types', 'taxes', 'payment-terms'];
 
   const masterDataModules = keys.map(key => {
     const fromConfig = getEntity(key);
     const fallback = DEFAULT_ACCOUNTING_MODULES.find(m => m.key === key);
-    return fromConfig || fallback || { key, title: key, icon: '📄' };
+    return {
+      ...(fromConfig || fallback || { key, title: key, icon: '📄' }),
+      screen: key === 'account-accounts' ? navigationScreen.CHART_OF_ACCOUNTS : (fromConfig?.screen || fallback?.screen),
+    };
   });
 
   const sections = [
@@ -111,6 +109,8 @@ export default function AccountingMenuScreen({ navigation }) {
               onPress={() => {
                 if (item.screen) {
                   navigation.navigate(item.screen, item.params);
+                } else if (item.key === 'account-accounts') {
+                  navigation.navigate(navigationScreen.CHART_OF_ACCOUNTS);
                 } else {
                   navigation.navigate('EntityList', { entityKey: item.key });
                 }

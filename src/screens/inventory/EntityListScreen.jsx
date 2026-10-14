@@ -111,10 +111,45 @@ export default function EntityListScreen({ route, navigation }) {
   };
 
   const renderSubtitle = item => {
-    if (!entity?.secondaryField) return undefined;
-    const val = item[entity.secondaryField];
-    if (val === null || val === undefined || val === '') return undefined;
-    return String(val);
+    const parts = [];
+    if (entity?.secondaryField) {
+      const val = item[entity.secondaryField];
+      if (val !== null && val !== undefined && val !== '') parts.push(String(val));
+    }
+    if (entityKey === 'products' || entityKey === 'product') {
+      if (item.lotNumber) {
+        parts.push(`Lot/SN: ${item.lotNumber}`);
+      } else if (item.tracking && item.tracking !== 'none') {
+        const trackingLabel = item.tracking === 'lot' ? 'By Lots' : 'By Serial';
+        parts.push(`Tracking: ${trackingLabel}`);
+      }
+    }
+    if (
+      (entityKey === 'customers' ||
+        entityKey === 'customer' ||
+        entityKey === 'vendors' ||
+        entityKey === 'vendor') &&
+      item.companyType
+    ) {
+      if (item.companyType === 'individual') {
+        if (item.parent?.name) {
+          parts.push(`🏢 ${item.parent.name}`);
+        } else {
+          parts.push('Individual');
+        }
+      } else if (item.companyStructure) {
+        const structureLabels = {
+          pvt_ltd: 'Pvt Ltd',
+          public_ltd: 'Public Ltd',
+          llc: 'LLC',
+          proprietorship: 'Proprietorship',
+          partnership: 'Partnership',
+          other: 'Company',
+        };
+        parts.push(structureLabels[item.companyStructure] || item.companyStructure);
+      }
+    }
+    return parts.length > 0 ? parts.join(' • ') : undefined;
   };
 
   if (!entity) {

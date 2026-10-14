@@ -8,4 +8,5 @@ export const navigationScreen = {
   VENDOR_LEDGER: 'VendorLedger',
   USERS_LIST: 'UsersList',
   USER_FORM: 'UserForm',
+  CHART_OF_ACCOUNTS: 'ChartOfAccounts',
 };

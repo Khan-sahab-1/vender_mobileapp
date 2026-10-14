@@ -5,7 +5,7 @@ import Button from '../../components/Button';
 import FormField from '../../components/FormField';
 import { LoadingOverlay, ErrorBanner } from '../../components/Feedback';
 import { createCrudApi } from '../../api/crud';
-import { getErrorMessage } from '../../api/client';
+import client, { getErrorMessage } from '../../api/client';
 import { getEntity } from '../../config/entities';
 import { buildInitialValues, buildPayload, validateRequired } from '../../utils/formTransforms';
 import { colors, radius, spacing, typography } from '../../theme/theme';
@@ -44,10 +44,95 @@ export default function EntityFormScreen({ route, navigation }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const setFieldValue = (name, val) => setValues(prev => ({ ...prev, [name]: val }));
+  const setFieldValue = (name, val) => {
+    setValues(prev => {
+      const next = { ...prev, [name]: val };
+      if (name === 'companyType') {
+        if (val === 'individual') {
+          next.companyStructure = null;
+        } else if (val === 'company') {
+          next.parentId = null;
+          if (!next.companyStructure) {
+            next.companyStructure = 'pvt_ltd';
+          }
+        }
+      }
+      return next;
+    });
+  };
+
+  // Auto-fetch default accounting and location relations for Customers & Vendors
+  useEffect(() => {
+    if (isEdit) return;
+
+    const isCust = entityKey === 'customers' || entityKey === 'customer';
+    const isVend = entityKey === 'vendors' || entityKey === 'vendor';
+
+    if (isCust) {
+      client.get('/account-accounts', { params: { type: 'receivable', limit: 1 } })
+        .then(res => {
+          const list = res.data?.data || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+          const acc = list[0];
+          if (acc) {
+            setFieldValue('accountReceivableId', { id: acc.id, label: `${acc.code} - ${acc.name}` });
+          }
+        })
+        .catch(() => {});
+
+      client.get('/locations', { params: { usage: 'customer', limit: 1 } })
+        .then(res => {
+          const list = res.data?.data || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+          const loc = list[0];
+          if (loc) {
+            setFieldValue('customerLocationId', { id: loc.id, label: loc.completeName || loc.name });
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (isVend) {
+      client.get('/account-accounts', { params: { type: 'payable', limit: 1 } })
+        .then(res => {
+          const list = res.data?.data || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+          const acc = list[0];
+          if (acc) {
+            setFieldValue('accountPayableId', { id: acc.id, label: `${acc.code} - ${acc.name}` });
+          }
+        })
+        .catch(() => {});
+
+      client.get('/locations', { params: { usage: 'vendor', limit: 1 } })
+        .then(res => {
+          const list = res.data?.data || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+          const loc = list[0];
+          if (loc) {
+            setFieldValue('vendorLocationId', { id: loc.id, label: loc.completeName || loc.name });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isEdit, entityKey]);
+
+  const isIndividual = values?.companyType === 'individual';
+  const isCompany = !isIndividual;
 
   const visibleFields = entity?.fields
-    ? entity.fields.filter(f => !(f.createOnly && isEdit) && !f.hidden)
+    ? entity.fields.filter(f => {
+        if (f.createOnly && isEdit) return false;
+        if (f.hidden) return false;
+        if (entityKey === 'customers' || entityKey === 'customer') {
+          if (['accountPayableId', 'vendorLocationId', 'isVendor'].includes(f.name)) return false;
+        }
+        if (entityKey === 'vendors' || entityKey === 'vendor') {
+          if (['accountReceivableId', 'customerLocationId', 'isCustomer'].includes(f.name)) return false;
+        }
+
+        // Conditional display based on Company vs Individual
+        if (f.name === 'companyStructure' && !isCompany) return false;
+        if (f.name === 'parentId' && !isIndividual) return false;
+
+        return true;
+      })
     : [];
 
   const handleSave = async () => {
@@ -61,6 +146,18 @@ export default function EntityFormScreen({ route, navigation }) {
     setError(null);
     try {
       const payload = buildPayload(entity, values);
+      if (values.companyType === 'company') {
+        delete payload.parentId;
+        if (!payload.companyStructure) {
+          payload.companyStructure = 'pvt_ltd';
+        }
+      } else if (values.companyType === 'individual') {
+        delete payload.companyStructure;
+        if (!payload.parentId) {
+          delete payload.parentId;
+        }
+      }
+      delete payload.creditLimit;
       if (isEdit) {
         await api.update(id, payload);
       } else {
@@ -114,10 +211,50 @@ export default function EntityFormScreen({ route, navigation }) {
 
         <View style={styles.formCard}>
           {visibleFields.map(field => {
-            const fieldProps =
-              isEdit && field.relation === entityKey
-                ? { ...field, params: { ...(field.params || {}), excludeId: id } }
-                : field;
+            let fieldProps = field;
+            if (field.name === 'parentId') {
+              const rel =
+                entityKey === 'vendors' || entityKey === 'vendor'
+                  ? 'vendors'
+                  : 'customers';
+              fieldProps = {
+                ...field,
+                relation: rel,
+                params: {
+                  companyType: 'company',
+                  strict: true,
+                  ...(isEdit ? { excludeId: id } : {}),
+                },
+              };
+            } else if (
+              field.name === 'name' &&
+              (entityKey === 'customers' ||
+                entityKey === 'customer' ||
+                entityKey === 'vendors' ||
+                entityKey === 'vendor')
+            ) {
+              const isVend = entityKey === 'vendors' || entityKey === 'vendor';
+              fieldProps = {
+                ...field,
+                label: isIndividual
+                  ? isVend
+                    ? 'Vendor Contact Name'
+                    : 'Customer Contact Name'
+                  : isVend
+                  ? 'Vendor Company Name'
+                  : 'Customer Company Name',
+                placeholder: isIndividual
+                  ? 'e.g. John Doe'
+                  : isVend
+                  ? 'e.g. Acme Supplies Pvt Ltd'
+                  : 'e.g. Acme Corp',
+              };
+            } else if (isEdit && field.relation === entityKey) {
+              fieldProps = {
+                ...field,
+                params: { ...(field.params || {}), excludeId: id },
+              };
+            }
             return (
               <FormField
                 key={field.name}
