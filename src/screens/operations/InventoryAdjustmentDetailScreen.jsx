@@ -113,7 +113,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
         await load();
         Alert.alert(
           'Inventory Validated',
-          'Stock moves created and physical on-hand balances successfully updated!',
+          'Stock moves created and physical stock balances successfully updated!',
         );
       } catch (e) {
         Alert.alert("Couldn't validate inventory", getErrorMessage(e));
@@ -134,7 +134,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
     } else {
       Alert.alert(
         'Validate Inventory Adjustment',
-        'This will create corrective stock moves and permanently update product on-hand quantities. Continue?',
+        'This will create corrective stock moves and permanently update product stock balances. Continue?',
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Validate', onPress: proceed },
@@ -173,13 +173,43 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
     if (!item?.value) return;
     setAddLineBusy(true);
     try {
-      await inventoryAdjustmentsApi.addLine(id, { productId: item.value });
+      const lot = item.record?.lotNumber || adjustment?.lotNumber || undefined;
+      await inventoryAdjustmentsApi.addLine(id, {
+        productId: item.value,
+        locationId: adjustment?.locationId,
+        lotNumber: lot,
+      });
       await load();
     } catch (e) {
-      Alert.alert("Couldn't add product", getErrorMessage(e));
+      Alert.alert("Couldn't add product line", getErrorMessage(e));
     } finally {
       setAddLineBusy(false);
     }
+  };
+
+  const handleDeleteLine = (lineId, productName) => {
+    Alert.alert(
+      'Remove Product Line',
+      `Are you sure you want to remove "${productName || 'this item'}" from the count?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await inventoryAdjustmentsApi.deleteLine(id, lineId);
+              await load();
+            } catch (e) {
+              Alert.alert("Couldn't remove line", getErrorMessage(e));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const adjustQty = (lineId, delta) => {
@@ -405,6 +435,13 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                 style={{ flex: 1, marginRight: spacing.sm }}
               />
               <Button
+                title="+ Add a line"
+                variant="outline"
+                onPress={() => setShowAddLineModal(true)}
+                disabled={busy || addLineBusy}
+                style={{ marginRight: spacing.sm }}
+              />
+              <Button
                 title="Cancel"
                 variant="ghost"
                 onPress={handleCancel}
@@ -424,7 +461,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                   style={[styles.validateBtn, { flex: 1, marginRight: spacing.sm }]}
                 />
                 <Button
-                  title="+ Add Line"
+                  title="+ Add a line"
                   variant="outline"
                   onPress={() => setShowAddLineModal(true)}
                   disabled={busy || addLineBusy}
@@ -500,10 +537,20 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
 
         {/* Lines Header & Search Filter */}
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Physical Inventory Count</Text>
-          <Text style={styles.sectionCount}>
-            {filteredLines.length} of {lines.length} items
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sectionTitle}>Physical Inventory Lines</Text>
+            <Text style={styles.sectionCount}>
+              {filteredLines.length} of {lines.length} items
+            </Text>
+          </View>
+          {isEditable && (
+            <TouchableOpacity
+              style={styles.headerAddBtn}
+              onPress={() => setShowAddLineModal(true)}
+              disabled={busy || addLineBusy}>
+              <Text style={styles.headerAddBtnText}>+ Add a line</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {lines.length > 5 && (
@@ -529,14 +576,22 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
             <Text style={styles.emptyLinesIcon}>📋</Text>
             <Text style={styles.emptyLinesTitle}>Inventory Not Started Yet</Text>
             <Text style={styles.emptyLinesDesc}>
-              Tap &quot;Start Inventory&quot; to auto-populate all products in the selected scope with their system on-hand balance.
+              Tap &quot;+ Add a line&quot; to pick products manually, or &quot;Start Inventory&quot; to auto-populate all products in the selected scope with their theoretical stock.
             </Text>
-            <Button
-              title="Start Inventory Now"
-              onPress={handleStart}
-              loading={busy}
-              style={{ marginTop: spacing.md }}
-            />
+            <View style={{ flexDirection: 'row', marginTop: spacing.md }}>
+              <Button
+                title="Start Inventory Now"
+                onPress={handleStart}
+                loading={busy}
+                style={{ marginRight: spacing.sm }}
+              />
+              <Button
+                title="+ Add a line"
+                variant="outline"
+                onPress={() => setShowAddLineModal(true)}
+                disabled={busy || addLineBusy}
+              />
+            </View>
           </View>
         )}
 
@@ -546,6 +601,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
           const hasCount = counted !== '' && counted !== undefined;
           const theoretical = Number(line.theoreticalQuantity ?? 0);
           const difference = hasCount ? Number(counted) - theoretical : 0;
+          const lotVal = line.lotNumber || line.product?.lotNumber;
 
           return (
             <View key={line.id} style={[styles.lineCard, shadows.sm]}>
@@ -554,11 +610,20 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                   <Text style={styles.lineProductName}>
                     {line.product?.name || 'Unnamed Product'}
                   </Text>
-                  {line.product?.sku ? (
-                    <Text style={styles.lineProductSku}>
-                      SKU: {line.product.sku}
-                    </Text>
-                  ) : null}
+                  <View style={styles.lineMetaRow}>
+                    {line.product?.sku ? (
+                      <Text style={styles.lineProductSku}>
+                        SKU: {line.product.sku}
+                      </Text>
+                    ) : null}
+                    {lotVal ? (
+                      <View style={styles.lotBadge}>
+                        <Text style={styles.lotBadgeText}>
+                          Lot/SN: {lotVal}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
 
                 {/* Variance Badge */}
@@ -577,26 +642,39 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                         difference < 0 && styles.diffLossText,
                         difference === 0 && styles.diffZeroText,
                       ]}>
-                      {difference > 0 ? `+${difference}` : difference}
+                      Diff: {difference > 0 ? `+${difference}` : difference}
                     </Text>
                   </View>
+                )}
+
+                {/* Delete Line */}
+                {isEditable && (
+                  <TouchableOpacity
+                    style={styles.deleteLineBtn}
+                    onPress={() =>
+                      handleDeleteLine(line.id, line.product?.name)
+                    }
+                    disabled={busy}>
+                    <Text style={styles.deleteLineBtnText}>✕</Text>
+                  </TouchableOpacity>
                 )}
               </View>
 
               {/* Counts comparison row */}
               <View style={styles.lineCountsRow}>
-                {/* System On-Hand */}
+                {/* Theoretical Qty */}
                 <View style={styles.countColumn}>
-                  <Text style={styles.countColumnLabel}>System On Hand</Text>
+                  <Text style={styles.countColumnLabel}>Theoretical Qty</Text>
                   <Text style={styles.countColumnVal}>{theoretical}</Text>
                 </View>
 
                 {/* Arrow */}
                 <Text style={styles.countArrow}>➔</Text>
 
-                {/* Counted Physical */}
+                {/* Real Quantity */}
                 <View style={styles.countColumn}>
-                  <Text style={styles.countColumnLabel}>Physical Counted</Text>
+                  <Text style={styles.countColumnLabel}>Real Quantity</Text>
+                  <Text style={styles.countColumnSub}>(Counted)</Text>
                   {isEditable ? (
                     <View style={styles.inputWrap}>
                       <TouchableOpacity
@@ -1050,5 +1128,57 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 11,
     marginLeft: 4,
+  },
+  headerAddBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.sm,
+  },
+  headerAddBtnText: {
+    color: colors.surface,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  lineMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+    flexWrap: 'wrap',
+  },
+  lotBadge: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.xs,
+    marginLeft: spacing.xs,
+  },
+  lotBadgeText: {
+    fontSize: 10,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  deleteLineBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginLeft: spacing.xs,
+  },
+  deleteLineBtnText: {
+    fontSize: 12,
+    color: colors.danger,
+    fontWeight: '700',
+  },
+  countColumnSub: {
+    fontSize: 9,
+    color: colors.textMuted,
+    marginBottom: 2,
   },
 });

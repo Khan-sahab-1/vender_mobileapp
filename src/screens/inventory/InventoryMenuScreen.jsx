@@ -7,13 +7,6 @@ import { colors, radius, spacing, typography } from '../../theme/theme';
 
 const OPERATIONS_MENU = [
   {
-    key: 'stock-quants',
-    icon: '📊',
-    title: 'Stock On Hand',
-    subtitle: 'Current quantity by product & location',
-    screen: 'StockQuants',
-  },
-  {
     key: 'receipts',
     icon: '📥',
     title: 'Stock Receipts',
@@ -51,13 +44,6 @@ const OPERATIONS_MENU = [
     title: 'Inventory Adjustments',
     subtitle: 'Count stock & correct differences',
     screen: 'InventoryAdjustmentList',
-  },
-  {
-    key: 'stock-valuation-op',
-    icon: '💰',
-    title: 'Inventory Valuation',
-    subtitle: 'Current stock value by product',
-    screen: 'StockValuation',
   },
 ];
 

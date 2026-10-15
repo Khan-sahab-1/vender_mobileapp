@@ -70,6 +70,12 @@ export const inventoryAdjustmentsApi = {
     );
     return data;
   },
+  deleteLine: async (id, lineId) => {
+    const { data } = await client.delete(
+      `/inventory-adjustments/${id}/lines/${lineId}`,
+    );
+    return data;
+  },
   validate: async id => {
     const { data } = await client.patch(`/inventory-adjustments/${id}/validate`);
     return data;
