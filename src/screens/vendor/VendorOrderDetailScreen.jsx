@@ -69,7 +69,7 @@ export default function VendorOrderDetailScreen({ route, navigation }) {
             <View style={{ flex: 1 }}>
               <Text style={styles.poTitle}>{order.name}</Text>
               <Text style={styles.sourceText}>
-                {order.source === 'odoo' ? 'Synced with Odoo ERP' : 'Direct Order'}
+                Purchase Order
               </Text>
             </View>
             <View

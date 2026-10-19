@@ -26,7 +26,8 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [draftCounts, setDraftCounts] = useState({});
+  const [draftAdjustments, setDraftAdjustments] = useState({});
+  const [draftReasons, setDraftReasons] = useState({});
   const [savingLineId, setSavingLineId] = useState(null);
   const [searchFilter, setSearchFilter] = useState('');
   const [showAddLineModal, setShowAddLineModal] = useState(false);
@@ -38,14 +39,27 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
       setError(null);
       const data = await inventoryAdjustmentsApi.get(id);
       setAdjustment(data);
-      const counts = {};
+      const adjustments = {};
+      const reasons = {};
       (data.lines ?? []).forEach(line => {
-        counts[line.id] =
-          line.countedQuantity === null || line.countedQuantity === undefined
-            ? ''
-            : String(line.countedQuantity);
+        const theoretical = Number(line.theoreticalQuantity || 0);
+        let adjVal = 0;
+        if (
+          line.adjustmentQuantity !== null &&
+          line.adjustmentQuantity !== undefined
+        ) {
+          adjVal = Number(line.adjustmentQuantity);
+        } else if (
+          line.countedQuantity !== null &&
+          line.countedQuantity !== undefined
+        ) {
+          adjVal = Number(line.countedQuantity) - theoretical;
+        }
+        adjustments[line.id] = String(adjVal);
+        reasons[line.id] = line.reason || '';
       });
-      setDraftCounts(counts);
+      setDraftAdjustments(adjustments);
+      setDraftReasons(reasons);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -63,27 +77,47 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   const isCancelled = adjustment?.state === 'cancelled';
   const isEditable = isDraft || isInProgress;
 
-  const saveLine = async lineId => {
-    const value = draftCounts[lineId];
-    if (value === '' || value === undefined) return;
+  const saveLine = async (lineId, explicitReason) => {
+    const rawVal = draftAdjustments[lineId];
+    if (rawVal === '' || rawVal === undefined || rawVal === '-') return;
+    const adjNum = Number(rawVal);
+    const line = (adjustment?.lines || []).find(l => l.id === lineId);
+    const theoretical = Number(line?.theoreticalQuantity || 0);
+    const reasonToSave =
+      explicitReason !== undefined ? explicitReason : draftReasons[lineId];
     setSavingLineId(lineId);
     try {
-      await inventoryAdjustmentsApi.updateLine(id, lineId, { countedQuantity: Number(value) });
+      await inventoryAdjustmentsApi.updateLine(id, lineId, {
+        adjustmentQuantity: adjNum,
+        reason: reasonToSave || undefined,
+      });
       // Update in local state without full reload to prevent focus jump
       setAdjustment(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           lines: prev.lines.map(l =>
-            l.id === lineId ? { ...l, countedQuantity: Number(value) } : l,
+            l.id === lineId
+              ? {
+                  ...l,
+                  adjustmentQuantity: adjNum,
+                  countedQuantity: theoretical + adjNum,
+                  reason: reasonToSave,
+                }
+              : l,
           ),
         };
       });
     } catch (e) {
-      Alert.alert("Couldn't save count", getErrorMessage(e));
+      Alert.alert("Couldn't save adjustment", getErrorMessage(e));
     } finally {
       setSavingLineId(null);
     }
+  };
+
+  const handleSelectReason = (lineId, reasonText) => {
+    setDraftReasons(prev => ({ ...prev, [lineId]: reasonText }));
+    saveLine(lineId, reasonText);
   };
 
   const handleStart = async () => {
@@ -101,9 +135,24 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
 
   const handleValidate = () => {
     const lines = adjustment.lines ?? [];
-    const uncounted = lines.filter(
-      l => draftCounts[l.id] === '' || draftCounts[l.id] === undefined,
-    );
+
+    // Check if any negative adjustment line has no reason provided
+    const negativeLinesWithoutReason = lines.filter(l => {
+      const adj = Number(draftAdjustments[l.id] ?? l.adjustmentQuantity ?? 0);
+      const reason = (draftReasons[l.id] || l.reason || '').trim();
+      return adj < 0 && !reason;
+    });
+
+    if (negativeLinesWithoutReason.length > 0) {
+      const prodNames = negativeLinesWithoutReason
+        .map(l => l.product?.name || 'Product')
+        .join(', ');
+      Alert.alert(
+        'Reason Required for Minus Stock',
+        `Stock is being reduced for:\n${prodNames}\n\nPlease select or enter a reason (e.g. Damaged, Expired, Lost) before validating.`,
+      );
+      return;
+    }
 
     const proceed = async () => {
       setBusy(true);
@@ -122,25 +171,14 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
       }
     };
 
-    if (uncounted.length > 0) {
-      Alert.alert(
-        'Incomplete Physical Count',
-        `${uncounted.length} item(s) have no counted quantity entered. Proceeding will treat them as zero quantity. Continue?`,
-        [
-          { text: 'Review Counts', style: 'cancel' },
-          { text: 'Validate Anyway', style: 'destructive', onPress: proceed },
-        ],
-      );
-    } else {
-      Alert.alert(
-        'Validate Inventory Adjustment',
-        'This will create corrective stock moves and permanently update product stock balances. Continue?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Validate', onPress: proceed },
-        ],
-      );
-    }
+    Alert.alert(
+      'Validate Inventory Adjustment',
+      'This will create corrective stock moves and permanently update product stock balances. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Validate', onPress: proceed },
+      ],
+    );
   };
 
   const handleCancel = () => {
@@ -178,6 +216,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
         productId: item.value,
         locationId: adjustment?.locationId,
         lotNumber: lot,
+        adjustmentQuantity: 0,
       });
       await load();
     } catch (e) {
@@ -213,24 +252,36 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   };
 
   const adjustQty = (lineId, delta) => {
-    const current = Number(draftCounts[lineId] || 0);
-    const updated = Math.max(0, current + delta);
-    setDraftCounts(prev => ({ ...prev, [lineId]: String(updated) }));
+    const line = (adjustment?.lines || []).find(l => l.id === lineId);
+    const theoretical = Number(line?.theoreticalQuantity || 0);
+    const current = Number(draftAdjustments[lineId] || 0);
+    // Don't allow reducing below -theoretical (stock can't be negative)
+    const updated = Math.max(-theoretical, current + delta);
+    setDraftAdjustments(prev => ({ ...prev, [lineId]: String(updated) }));
     setSavingLineId(lineId);
     inventoryAdjustmentsApi
-      .updateLine(id, lineId, { countedQuantity: updated })
+      .updateLine(id, lineId, {
+        adjustmentQuantity: updated,
+        reason: draftReasons[lineId] || undefined,
+      })
       .then(() => {
         setAdjustment(prev => {
           if (!prev) return prev;
           return {
             ...prev,
             lines: prev.lines.map(l =>
-              l.id === lineId ? { ...l, countedQuantity: updated } : l,
+              l.id === lineId
+                ? {
+                    ...l,
+                    adjustmentQuantity: updated,
+                    countedQuantity: theoretical + updated,
+                  }
+                : l,
             ),
           };
         });
       })
-      .catch(e => Alert.alert("Couldn't save count", getErrorMessage(e)))
+      .catch(e => Alert.alert("Couldn't save adjustment", getErrorMessage(e)))
       .finally(() => setSavingLineId(null));
   };
 
@@ -249,9 +300,9 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   let lossCount = 0;
 
   lines.forEach(l => {
-    const countedVal = draftCounts[l.id];
-    if (countedVal !== '' && countedVal !== undefined) {
-      const diff = Number(countedVal) - Number(l.theoreticalQuantity ?? 0);
+    const rawVal = draftAdjustments[l.id];
+    if (rawVal !== '' && rawVal !== undefined && rawVal !== '-') {
+      const diff = Number(rawVal);
       if (diff > 0) gainCount++;
       else if (diff < 0) lossCount++;
       if (diff !== 0) discrepancyCount++;
@@ -394,14 +445,6 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
 
           <View style={[styles.infoGrid, { marginTop: spacing.sm }]}>
             <View style={styles.infoCol}>
-              <Text style={styles.infoLabel}>Inventory Type</Text>
-              <Text style={styles.infoVal}>
-                {adjustment.inventoryType === 'stock_journal'
-                  ? 'Stock Journal'
-                  : 'Stock Inventory'}
-              </Text>
-            </View>
-            <View style={styles.infoCol}>
               <Text style={styles.infoLabel}>Inventory Of</Text>
               <Text style={styles.infoVal}>
                 {adjustment.inventoryOf === 'category'
@@ -482,7 +525,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.doneTitle}>Inventory Validated</Text>
                 <Text style={styles.doneDesc}>
-                  Stock moves have booked all variances and on-hand quantities are now up to date.
+                  Double-entry stock moves have booked all variances between the warehouse location and Virtual Locations / Inventory Adjustment.
                 </Text>
               </View>
             </View>
@@ -597,10 +640,11 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
 
         {/* Lines List */}
         {filteredLines.map(line => {
-          const counted = draftCounts[line.id];
-          const hasCount = counted !== '' && counted !== undefined;
           const theoretical = Number(line.theoreticalQuantity ?? 0);
-          const difference = hasCount ? Number(counted) - theoretical : 0;
+          const rawAdj = draftAdjustments[line.id];
+          const hasAdj = rawAdj !== '' && rawAdj !== undefined && rawAdj !== '-';
+          const adj = hasAdj ? Number(rawAdj) : 0;
+          const newOnHand = theoretical + adj;
           const lotVal = line.lotNumber || line.product?.lotNumber;
 
           return (
@@ -627,25 +671,27 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                 </View>
 
                 {/* Variance Badge */}
-                {hasCount && (
-                  <View
+                <View
+                  style={[
+                    styles.diffBadge,
+                    adj > 0 && styles.diffSurplus,
+                    adj < 0 && styles.diffLoss,
+                    adj === 0 && styles.diffZero,
+                  ]}>
+                  <Text
                     style={[
-                      styles.diffBadge,
-                      difference > 0 && styles.diffSurplus,
-                      difference < 0 && styles.diffLoss,
-                      difference === 0 && styles.diffZero,
+                      styles.diffText,
+                      adj > 0 && styles.diffSurplusText,
+                      adj < 0 && styles.diffLossText,
+                      adj === 0 && styles.diffZeroText,
                     ]}>
-                    <Text
-                      style={[
-                        styles.diffText,
-                        difference > 0 && styles.diffSurplusText,
-                        difference < 0 && styles.diffLossText,
-                        difference === 0 && styles.diffZeroText,
-                      ]}>
-                      Diff: {difference > 0 ? `+${difference}` : difference}
-                    </Text>
-                  </View>
-                )}
+                    {adj > 0
+                      ? `+${adj} (Add)`
+                      : adj < 0
+                      ? `${adj} (Deduct)`
+                      : '0 (No Change)'}
+                  </Text>
+                </View>
 
                 {/* Delete Line */}
                 {isEditable && (
@@ -660,21 +706,21 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                 )}
               </View>
 
-              {/* Counts comparison row */}
+              {/* Counts comparison row: Current On Hand -> Adjust (+/-) -> New On Hand */}
               <View style={styles.lineCountsRow}>
                 {/* Theoretical Qty */}
                 <View style={styles.countColumn}>
-                  <Text style={styles.countColumnLabel}>Theoretical Qty</Text>
+                  <Text style={styles.countColumnLabel}>Current On Hand</Text>
                   <Text style={styles.countColumnVal}>{theoretical}</Text>
                 </View>
 
                 {/* Arrow */}
                 <Text style={styles.countArrow}>➔</Text>
 
-                {/* Real Quantity */}
+                {/* Adjust (+/-) */}
                 <View style={styles.countColumn}>
-                  <Text style={styles.countColumnLabel}>Real Quantity</Text>
-                  <Text style={styles.countColumnSub}>(Counted)</Text>
+                  <Text style={styles.countColumnLabel}>Adjust (+/-)</Text>
+                  <Text style={styles.countColumnSub}>0 = No change</Text>
                   {isEditable ? (
                     <View style={styles.inputWrap}>
                       <TouchableOpacity
@@ -684,13 +730,13 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                       </TouchableOpacity>
 
                       <TextInput
-                        value={counted}
-                        onChangeText={text =>
-                          setDraftCounts(prev => ({
+                        value={draftAdjustments[line.id] ?? '0'}
+                        onChangeText={text => {
+                          setDraftAdjustments(prev => ({
                             ...prev,
-                            [line.id]: text.replace(/[^0-9.-]/g, ''),
-                          }))
-                        }
+                            [line.id]: text,
+                          }));
+                        }}
                         onBlur={() => saveLine(line.id)}
                         keyboardType="numeric"
                         placeholder="0"
@@ -705,10 +751,179 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <Text style={styles.countColumnVal}>{counted || '0'}</Text>
+                    <Text style={styles.countColumnVal}>
+                      {adj > 0 ? `+${adj}` : adj}
+                    </Text>
                   )}
                 </View>
+
+                {/* Equals */}
+                <Text style={styles.countArrow}>=</Text>
+
+                {/* New On Hand */}
+                <View style={styles.countColumn}>
+                  <Text style={styles.countColumnLabel}>New On Hand</Text>
+                  <Text style={styles.countColumnSub}>(Resulting)</Text>
+                  <Text
+                    style={[
+                      styles.countColumnVal,
+                      adj > 0 && { color: colors.success, fontWeight: '800' },
+                      adj < 0 && { color: colors.danger, fontWeight: '800' },
+                    ]}>
+                    {newOnHand}
+                  </Text>
+                </View>
               </View>
+
+              {/* If minus (stock reduction): prompt / require reason */}
+              {adj < 0 && (
+                <View style={styles.reasonCardBox}>
+                  <View style={styles.reasonHeaderRow}>
+                    <Text style={styles.reasonTitle}>
+                      ⚠️ Reason for Stock Reduction (Required)
+                    </Text>
+                  </View>
+                  <Text style={styles.reasonSubtitle}>
+                    Why are {Math.abs(adj)} unit(s) being deducted? Select or type reason:
+                  </Text>
+                  {isEditable ? (
+                    <>
+                      <View style={styles.reasonChipsWrap}>
+                        {[
+                          'Damaged / Broken',
+                          'Expired',
+                          'Lost / Stolen',
+                          'Physical Recount',
+                          'Scrap / Wastage',
+                        ].map(preset => {
+                          const currentReason =
+                            draftReasons[line.id] !== undefined
+                              ? draftReasons[line.id]
+                              : line.reason;
+                          const isSelected = currentReason === preset;
+                          return (
+                            <TouchableOpacity
+                              key={preset}
+                              style={[
+                                styles.reasonChip,
+                                isSelected && styles.reasonChipSelected,
+                              ]}
+                              onPress={() => handleSelectReason(line.id, preset)}>
+                              <Text
+                                style={[
+                                  styles.reasonChipText,
+                                  isSelected && styles.reasonChipTextSelected,
+                                ]}>
+                                {preset}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      <TextInput
+                        style={styles.reasonInput}
+                        value={
+                          draftReasons[line.id] !== undefined
+                            ? draftReasons[line.id]
+                            : line.reason || ''
+                        }
+                        onChangeText={text =>
+                          setDraftReasons(prev => ({ ...prev, [line.id]: text }))
+                        }
+                        onBlur={() => saveLine(line.id)}
+                        placeholder="Or enter custom reason / remarks..."
+                        placeholderTextColor={colors.textMuted}
+                      />
+                    </>
+                  ) : (
+                    <Text style={styles.reasonReadonlyText}>
+                      Reason: <Text style={styles.reasonReadonlyVal}>{line.reason || 'Not specified'}</Text>
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {/* Double-Entry Stock Movement Display */}
+              {adj !== 0 ? (
+                isDone ? (
+                  <View style={styles.stockMoveBox}>
+                    <View style={styles.stockMoveHeader}>
+                      <Text style={styles.stockMoveTag}>📦 Stock Move (Double-Entry)</Text>
+                      <View style={styles.moveStateBadge}>
+                        <Text style={styles.moveStateText}>DONE</Text>
+                      </View>
+                    </View>
+                    <View style={styles.stockMoveRoute}>
+                      <View style={styles.routeCol}>
+                        <Text style={styles.routeLabel}>Source</Text>
+                        <Text style={styles.routeLocName} numberOfLines={1}>
+                          {line.stockMove?.sourceLocation?.completeName ||
+                            line.stockMove?.sourceLocation?.name ||
+                            (adj > 0
+                              ? 'Virtual Locations/Inventory Adjustment'
+                              : line.location?.completeName ||
+                                line.location?.name ||
+                                adjustment.location?.completeName ||
+                                adjustment.location?.name ||
+                                'apex 1 / stock')}
+                        </Text>
+                      </View>
+                      <Text style={styles.routeArrow}>➔</Text>
+                      <View style={styles.routeCol}>
+                        <Text style={styles.routeLabel}>Destination</Text>
+                        <Text style={styles.routeLocName} numberOfLines={1}>
+                          {line.stockMove?.destLocation?.completeName ||
+                            line.stockMove?.destLocation?.name ||
+                            (adj > 0
+                              ? line.location?.completeName ||
+                                line.location?.name ||
+                                adjustment.location?.completeName ||
+                                adjustment.location?.name ||
+                                'apex 1 / stock'
+                              : 'Virtual Locations/Inventory Adjustment')}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.stockMoveQtyText}>
+                      Moved: <Text style={{ fontWeight: '700' }}>{Math.abs(adj)} Units</Text>{' '}
+                      {adj > 0 ? '(+ Added to warehouse)' : '(- Deducted from warehouse)'}
+                    </Text>
+                    {line.reason ? (
+                      <Text style={styles.stockMoveReasonText}>
+                        📝 Reason: <Text style={styles.stockMoveReasonVal}>{line.reason}</Text>
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={styles.stockMovePreviewBox}>
+                    <Text style={styles.previewTitle}>
+                      ⚡ Double-Entry Move on Validate:
+                    </Text>
+                    <View style={styles.previewRouteRow}>
+                      <Text style={styles.previewLoc} numberOfLines={1}>
+                        {adj > 0
+                          ? 'Virtual Locations/Inventory Adjustment'
+                          : line.location?.name || adjustment.location?.name || 'apex 1 / stock'}
+                      </Text>
+                      <Text style={styles.previewArrow}> ➔ </Text>
+                      <Text style={styles.previewLoc} numberOfLines={1}>
+                        {adj > 0
+                          ? line.location?.name || adjustment.location?.name || 'apex 1 / stock'
+                          : 'Virtual Locations/Inventory Adjustment'}
+                      </Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.previewQty,
+                        adj > 0 ? styles.gainText : styles.lossText,
+                      ]}>
+                      {adj > 0
+                        ? `+${adj} Units will be added to warehouse`
+                        : `${Math.abs(adj)} Units will be deducted from warehouse`}
+                    </Text>
+                  </View>
+                )
+              ) : null}
 
               {savingLineId === line.id ? (
                 <View style={styles.savingRow}>
@@ -1180,5 +1395,189 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: colors.textMuted,
     marginBottom: 2,
+  },
+  stockMoveBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    padding: spacing.xs + 3,
+    marginTop: spacing.xs + 4,
+  },
+  stockMoveHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  stockMoveTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  moveStateBadge: {
+    backgroundColor: '#E7F9F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.xs,
+  },
+  moveStateText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#057A60',
+  },
+  stockMoveRoute: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: radius.xs,
+    padding: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  routeCol: {
+    flex: 1,
+  },
+  routeLabel: {
+    fontSize: 9,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  routeLocName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+    marginTop: 1,
+  },
+  routeArrow: {
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: 'bold',
+    marginHorizontal: spacing.xs,
+  },
+  stockMoveQtyText: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  stockMovePreviewBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    padding: spacing.xs + 3,
+    marginTop: spacing.xs + 4,
+  },
+  previewTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    marginBottom: 2,
+  },
+  previewRouteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  previewLoc: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E40AF',
+    maxWidth: '45%',
+  },
+  previewArrow: {
+    fontSize: 12,
+    color: '#1D4ED8',
+    fontWeight: 'bold',
+  },
+  previewQty: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  gainText: {
+    color: '#057A60',
+  },
+  lossText: {
+    color: '#B42323',
+  },
+  reasonCardBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    padding: spacing.sm,
+    marginTop: spacing.xs + 3,
+  },
+  reasonHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  reasonTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  reasonSubtitle: {
+    fontSize: 10,
+    color: '#7F1D1D',
+    marginBottom: spacing.xs,
+  },
+  reasonChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: spacing.xs,
+  },
+  reasonChip: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: spacing.sm - 1,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+  },
+  reasonChipSelected: {
+    backgroundColor: '#DC2626',
+    borderColor: '#DC2626',
+  },
+  reasonChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  reasonChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  reasonInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    fontSize: 11,
+    color: colors.text,
+  },
+  reasonReadonlyText: {
+    fontSize: 11,
+    color: '#7F1D1D',
+    marginTop: 2,
+  },
+  reasonReadonlyVal: {
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  stockMoveReasonText: {
+    fontSize: 10,
+    color: '#991B1B',
+    marginTop: 2,
+  },
+  stockMoveReasonVal: {
+    fontWeight: '700',
   },
 });

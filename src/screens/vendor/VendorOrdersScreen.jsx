@@ -140,15 +140,9 @@ export default function VendorOrdersScreen({ navigation }) {
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.poNumber}>{item.name}</Text>
-                    {item.source === 'odoo' ? (
-                      <View style={styles.odooTag}>
-                        <Text style={styles.odooTagText}>Odoo PO #{item.odooId}</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.localTag}>
-                        <Text style={styles.localTagText}>Direct Order</Text>
-                      </View>
-                    )}
+                    <View style={styles.localTag}>
+                      <Text style={styles.localTagText}>Purchase Order</Text>
+                    </View>
                   </View>
 
                   <View

@@ -24,8 +24,10 @@ import { navigationScreen } from './navigationScreen/navigationScreen';
 import PurchaseOrderform from '../screens/purchase/PurchaseOrderform';
 import Venderbills from '../screens/purchase/Venderbills';
 import VendorBillDetailScreen from '../screens/purchase/VendorBillDetailScreen';
+import VoucherScreen from '../screens/purchase/VoucherScreen';
 import AccountingMenuScreen from '../screens/accounting/AccountingMenuScreen';
 import ChartOfAccountsScreen from '../screens/accounting/ChartOfAccountsScreen';
+import SalesMenuScreen from '../screens/sales/SalesMenuScreen';
 import SalesOrdersListScreen from '../screens/sales/SalesOrdersListScreen';
 import SalesOrderDetailScreen from '../screens/sales/SalesOrderDetailScreen';
 import UsersListScreen from '../screens/settings/UsersListScreen';
@@ -87,7 +89,12 @@ export default function MainStackNavigator() {
         options={({ route }) => ({ title: route.params?.title ?? 'Coming Soon' })}
       />
 
-      {/* Sales Orders (Odoo) */}
+      {/* Sales */}
+      <Stack.Screen
+        name="SalesMenu"
+        component={SalesMenuScreen}
+        options={{ title: 'Sales' }}
+      />
       <Stack.Screen
         name="SalesOrdersList"
         component={SalesOrdersListScreen}
@@ -181,6 +188,11 @@ export default function MainStackNavigator() {
         name={navigationScreen.VENDOR_BILL_DETAIL}
         component={VendorBillDetailScreen}
         options={{ title: 'Vendor Bill' }}
+      />
+      <Stack.Screen
+        name={navigationScreen.VOUCHER}
+        component={VoucherScreen}
+        options={{ title: 'Accounting Voucher' }}
       />
       <Stack.Screen
         name={navigationScreen.CHART_OF_ACCOUNTS}

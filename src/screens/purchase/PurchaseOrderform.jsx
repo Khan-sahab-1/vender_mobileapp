@@ -116,22 +116,29 @@ export default function PurchaseOrderform({ navigation, route }) {
   // Lines
   const [lines, setLines] = useState(
     initialOrder?.lines && initialOrder.lines.length > 0
-      ? initialOrder.lines.map((l, idx) => ({
-          id: l.id || `line-${idx}`,
-          productId: l.productId,
-          productName: l.product?.name || l.name || 'Item',
-          quantity: Number(l.quantity || 1),
-          unitPrice: Number(l.unitPrice || 0),
-          taxRate: 0.18,
-        }))
+      ? initialOrder.lines.map((l, idx) => {
+          const rate = l.tax ? (Number(l.tax.amount) || 0) / 100 : 0;
+          return {
+            id: l.id || `line-${idx}`,
+            productId: l.productId,
+            productName: l.product?.name || l.name || 'Item',
+            quantity: Number(l.quantity || 1),
+            unitPrice: Number(l.unitPrice || 0),
+            taxId: l.taxId || l.tax?.id || null,
+            taxRate: rate,
+            taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
+          };
+        })
       : [
           {
             id: 'line-0',
             productId: null,
             productName: '',
-            quantity: 10,
-            unitPrice: 100,
-            taxRate: 0.18,
+            quantity: 1,
+            unitPrice: 0,
+            taxId: null,
+            taxRate: 0,
+            taxName: null,
           },
         ]
   );
@@ -144,6 +151,7 @@ export default function PurchaseOrderform({ navigation, route }) {
     options: null,
     field: null,
     lineId: null,
+    params: null,
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -214,14 +222,19 @@ export default function PurchaseOrderform({ navigation, route }) {
             if (res.notes) setNotes(res.notes);
             if (res.lines && res.lines.length > 0) {
               setLines(
-                res.lines.map((l, idx) => ({
-                  id: l.id || `line-${idx}`,
-                  productId: l.productId,
-                  productName: l.product?.name || l.description || 'Item',
-                  quantity: Number(l.quantity || 1),
-                  unitPrice: Number(l.unitPrice || 0),
-                  taxRate: 0.18,
-                }))
+                res.lines.map((l, idx) => {
+                  const rate = l.tax ? (Number(l.tax.amount) || 0) / 100 : 0;
+                  return {
+                    id: l.id || `line-${idx}`,
+                    productId: l.productId,
+                    productName: l.product?.name || l.description || 'Item',
+                    quantity: Number(l.quantity || 1),
+                    unitPrice: Number(l.unitPrice || 0),
+                    taxId: l.taxId || l.tax?.id || null,
+                    taxRate: rate,
+                    taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
+                  };
+                })
               );
             }
           }
@@ -242,11 +255,15 @@ export default function PurchaseOrderform({ navigation, route }) {
 
   // Calculations
   const totals = useMemo(() => {
-    const untaxed = lines.reduce(
-      (sum, l) => sum + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0),
-      0
-    );
-    const tax = untaxed * 0.18;
+    let untaxed = 0;
+    let tax = 0;
+    for (const l of lines) {
+      const lineSub = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+      untaxed += lineSub;
+      if (l.taxRate) {
+        tax += lineSub * Number(l.taxRate);
+      }
+    }
     const total = untaxed + tax;
     return { untaxed, tax, total };
   }, [lines]);
@@ -262,15 +279,15 @@ export default function PurchaseOrderform({ navigation, route }) {
       });
       if (rec?.currency) setCurrency(rec.currency);
     } else if (pickerModal.field === 'warehouse') {
-  const rec = item.record;
+      const rec = item.record;
 
-  setWarehouse({
-    value: item.value,
-    label: item.label,
-    address: formatVendorAddress(rec),
-    record: rec,
-  });
-} else if (pickerModal.field === 'division') {
+      setWarehouse({
+        value: item.value,
+        label: item.label,
+        address: formatVendorAddress(rec),
+        record: rec,
+      });
+    } else if (pickerModal.field === 'division') {
       setDivision(item);
     } else if (pickerModal.field === 'currency') {
       setCurrency(item.value);
@@ -289,8 +306,40 @@ export default function PurchaseOrderform({ navigation, route }) {
             : l
         )
       );
+    } else if (pickerModal.field === 'lineTax') {
+      const rec = item.record;
+      const amount = Number(rec?.amount) || 0;
+      const rate = rec?.amountType === 'percent' || !rec?.amountType ? amount / 100 : 0;
+      const taxLabel = rec?.name || `${amount}%`;
+      setLines(prev =>
+        prev.map(l =>
+          l.id === pickerModal.lineId
+            ? {
+                ...l,
+                taxId: item.value,
+                taxRate: rate,
+                taxName: taxLabel,
+              }
+            : l
+        )
+      );
     }
     setPickerModal(p => ({ ...p, visible: false }));
+  };
+
+  const handleClearLineTax = lineId => {
+    setLines(prev =>
+      prev.map(l =>
+        l.id === lineId
+          ? {
+              ...l,
+              taxId: null,
+              taxRate: 0,
+              taxName: null,
+            }
+          : l
+      )
+    );
   };
 
   const handleAddLine = () => {
@@ -302,7 +351,9 @@ export default function PurchaseOrderform({ navigation, route }) {
         productName: '',
         quantity: 1,
         unitPrice: 0,
-        taxRate: 0.18,
+        taxId: null,
+        taxRate: 0,
+        taxName: null,
       },
     ]);
   };
@@ -367,6 +418,7 @@ export default function PurchaseOrderform({ navigation, route }) {
         productId: l.productId || l.id,
         quantity: Number(l.quantity),
         unitPrice: Number(l.unitPrice),
+        taxId: l.taxId || undefined,
       })),
     };
 
@@ -741,11 +793,12 @@ export default function PurchaseOrderform({ navigation, route }) {
             </Text>
             <Text style={styles.triggerChevron}>⌄</Text>
           </TouchableOpacity>
+
         </View>
 
         {/* 3. DATES & CURRENCY */}
         <View style={[styles.card, shadows.sm]}>
-          <Text style={styles.cardSectionTitle}>ORDER SCHEDULE & CURRENCY</Text>
+          <Text style={styles.cardSectionTitle}>ORDER SCHEDULE & INVOICING</Text>
 
           <View style={styles.rowTwo}>
             <TouchableOpacity
@@ -802,6 +855,7 @@ export default function PurchaseOrderform({ navigation, route }) {
 
           {lines.map((l, index) => {
             const lineSubtotal = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+            const lineTaxAmount = lineSubtotal * (Number(l.taxRate) || 0);
             return (
               <View key={l.id} style={styles.lineCard}>
                 <View style={styles.lineTop}>
@@ -876,6 +930,55 @@ export default function PurchaseOrderform({ navigation, route }) {
                     </Text>
                   </View>
                 </View>
+
+                {/* Tax Selector Row */}
+                <View style={styles.lineTaxRow}>
+                  <Text style={styles.controlLabel}>Tax</Text>
+                  {l.taxId ? (
+                    <View style={styles.selectedTaxBadge}>
+                      <TouchableOpacity
+                        style={styles.taxBadgeContent}
+                        onPress={() =>
+                          setPickerModal({
+                            visible: true,
+                            title: 'Select Tax',
+                            relation: 'taxes',
+                            field: 'lineTax',
+                            lineId: l.id,
+                            params: { typeTaxUse: 'purchase' },
+                          })
+                        }>
+                        <Text style={styles.selectedTaxText}>
+                          🧾 {l.taxName} ({(Number(l.taxRate || 0) * 100).toFixed(0)}%)
+                        </Text>
+                        <Text style={styles.selectedTaxSub}>
+                          +{currency} {lineTaxAmount.toFixed(2)}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleClearLineTax(l.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={styles.clearTaxBtn}>
+                        <Text style={styles.clearTaxBtnText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.taxSelectBtn}
+                      onPress={() =>
+                        setPickerModal({
+                          visible: true,
+                          title: 'Select Tax',
+                          relation: 'taxes',
+                          field: 'lineTax',
+                          lineId: l.id,
+                          params: { typeTaxUse: 'purchase' },
+                        })
+                      }>
+                      <Text style={styles.taxSelectBtnText}>+ Select Tax (None)</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             );
           })}
@@ -889,7 +992,7 @@ export default function PurchaseOrderform({ navigation, route }) {
               </Text>
             </View>
             <View style={styles.totalRow}>
-              <Text style={styles.totalRowLabel}>Estimated GST (18%):</Text>
+              <Text style={styles.totalRowLabel}>Tax Amount:</Text>
               <Text style={styles.totalRowValue}>
                 {currency} {totals.tax.toFixed(2)}
               </Text>
@@ -975,6 +1078,7 @@ export default function PurchaseOrderform({ navigation, route }) {
         title={pickerModal.title}
         relation={pickerModal.relation}
         options={pickerModal.options}
+        params={pickerModal.params}
         onClose={() => setPickerModal(p => ({ ...p, visible: false }))}
         onSelect={handlePickerSelect}
       />
@@ -1362,6 +1466,63 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.text,
+  },
+  lineTaxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xs + 4,
+    paddingTop: spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  taxSelectBtn: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  taxSelectBtnText: {
+    fontSize: 11,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  selectedTaxBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  taxBadgeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  selectedTaxText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  selectedTaxSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0284C7',
+    marginLeft: 4,
+  },
+  clearTaxBtn: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  clearTaxBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#EF4444',
   },
   totalsBox: {
     borderTopWidth: 1,

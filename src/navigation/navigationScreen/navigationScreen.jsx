@@ -9,4 +9,8 @@ export const navigationScreen = {
   USERS_LIST: 'UsersList',
   USER_FORM: 'UserForm',
   CHART_OF_ACCOUNTS: 'ChartOfAccounts',
+  SALES_MENU: 'SalesMenu',
+  SALES_ORDERS_LIST: 'SalesOrdersList',
+  SALES_ORDER_DETAIL: 'SalesOrderDetail',
+  VOUCHER: 'VoucherScreen',
 };

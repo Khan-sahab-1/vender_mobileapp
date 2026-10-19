@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,16 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { navigate } from './navigationRef';
-import { vendorPortalApi } from '../api/vendorPortal';
 import { colors, radius, spacing, typography } from '../theme/theme';
 
 const MENU_ITEMS = [
   { icon: '🏠', label: 'Dashboard', screen: 'Dashboard' },
   { icon: '📦', label: 'Inventory', screen: 'InventoryMenu' },
-  { icon: '🛒', label: 'Sales (SO)', screen: 'SalesOrdersList' },
+  { icon: '🛒', label: 'Sales', screen: 'SalesMenu' },
   { icon: '🧾', label: 'Purchase', screen: 'Purchasedashboard' },
   { icon: '📊', label: 'Accounting', screen: 'AccountingMenu' },
   { icon: '👥', label: 'Users & Access', screen: 'UsersList' },
@@ -26,7 +24,6 @@ const MENU_ITEMS = [
 
 export default function SideMenuContent({ closeDrawer }) {
   const { user, logout } = useAuth();
-  const [syncing, setSyncing] = useState(false);
 
   const isManagement = Boolean(
     user?.isAdmin ||
@@ -54,39 +51,6 @@ export default function SideMenuContent({ closeDrawer }) {
     }, 150);
   };
 
-  const handleSyncOdoo = () => {
-    if (syncing) return;
-    Alert.alert(
-      'Sync Vendors from Odoo',
-      'This will connect to Odoo ERP (192.168.1.6:8070), import suppliers, and create mobile vendor accounts.\n\nDefault vendor password: vendor123',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start Sync',
-          onPress: async () => {
-            try {
-              setSyncing(true);
-              const res = await vendorPortalApi.syncFromOdoo();
-              Alert.alert(
-                'Sync Complete ✅',
-                `Found ${res.totalOdooSuppliers} suppliers in Odoo.\n` +
-                `• Imported: ${res.importedCount}\n` +
-                `• Updated: ${res.updatedCount}\n\n` +
-                `Vendors can now log in using their email and default password: vendor123`
-              );
-            } catch (err) {
-              Alert.alert(
-                'Sync Failed ❌',
-                err?.response?.data?.message || err.message || 'Could not connect to Odoo ERP.'
-              );
-            } finally {
-              setSyncing(false);
-            }
-          },
-        },
-      ]
-    );
-  };
 
   const handleLogout = () => {
     Alert.alert('Log Out', 'Are you sure you want to sign out?', [
@@ -150,33 +114,6 @@ export default function SideMenuContent({ closeDrawer }) {
               <Text style={styles.menuChevron}>›</Text>
             </TouchableOpacity>
           ))}
-        </View>
-
-        {/* Integrations Section */}
-        <Text style={[styles.sectionHeader, { marginTop: spacing.md }]}>Integrations</Text>
-        <View style={styles.menu}>
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={handleSyncOdoo}
-            disabled={syncing}
-            accessibilityRole="button"
-            accessibilityLabel="Sync Odoo Vendors">
-            <View style={[styles.iconBox, { backgroundColor: '#F3E8FF' }]}>
-              {syncing ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Text style={styles.menuIcon}>🔄</Text>
-              )}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.menuLabel}>
-                {syncing ? 'Syncing with Odoo...' : 'Sync Odoo Vendors'}
-              </Text>
-              <Text style={{ fontSize: 11, color: colors.textMuted }}>Odoo 11 ERP (192.168.1.6:8070)</Text>
-            </View>
-            <Text style={styles.menuChevron}>›</Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
 

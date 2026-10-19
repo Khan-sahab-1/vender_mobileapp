@@ -96,9 +96,19 @@ export default function Venderbills() {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const num = (bill.billNumber || '').toLowerCase();
+        const invNum = (bill.invoiceNumber || '').toLowerCase();
         const vName = (bill.vendorName || bill.vendor?.name || '').toLowerCase();
+        const deliverTo = (bill.deliverTo || '').toLowerCase();
+        const divName = (bill.division?.name || '').toLowerCase();
         const poRef = (bill.sourceDocument || '').toLowerCase();
-        return num.includes(q) || vName.includes(q) || poRef.includes(q);
+        return (
+          num.includes(q) ||
+          invNum.includes(q) ||
+          vName.includes(q) ||
+          deliverTo.includes(q) ||
+          divName.includes(q) ||
+          poRef.includes(q)
+        );
       }
 
       return true;
@@ -109,7 +119,11 @@ export default function Venderbills() {
     const billState = item.state || 'draft';
     const total = Number(item.amountTotal || 0);
     const residual = Number(item.residualAmount ?? item.amountTotal ?? 0);
-    const billDate = item.invoiceDate ? String(item.invoiceDate).slice(0, 10) : '';
+    const dateStr = item.invoiceDate
+      ? String(item.invoiceDate).slice(0, 10)
+      : item.createdAt
+      ? String(item.createdAt).slice(0, 10)
+      : '';
 
     return (
       <TouchableOpacity
@@ -123,9 +137,19 @@ export default function Venderbills() {
         }>
         {/* Top row: Bill number, Date & State */}
         <View style={styles.cardHeader}>
-          <View>
+          <View style={{ flex: 1, marginRight: spacing.xs }}>
             <Text style={styles.billNumber}>{item.billNumber || 'BILL-DRAFT'}</Text>
-            {billDate ? <Text style={styles.billDate}>{billDate}</Text> : null}
+            {item.invoiceNumber ? (
+              <Text style={styles.invNumber}>Inv #: {item.invoiceNumber}</Text>
+            ) : null}
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
+              {item.receiptDate ? (
+                <Text style={styles.billDate}>Receipt: {String(item.receiptDate).slice(0, 10)}</Text>
+              ) : null}
+              {dateStr ? (
+                <Text style={styles.billDate}>{item.receiptDate ? ' · ' : ''}Bill: {dateStr}</Text>
+              ) : null}
+            </View>
           </View>
           <StateBadge state={billState} />
         </View>
@@ -138,6 +162,16 @@ export default function Venderbills() {
           </Text>
         </View>
 
+        {/* Deliver To */}
+        {(Boolean(item.deliverTo) || Boolean(item.warehouse?.name)) && (
+          <View style={styles.vendorRow}>
+            <Text style={styles.vendorLabel}>Deliver To:</Text>
+            <Text style={[styles.vendorName, { color: '#059669' }]} numberOfLines={1}>
+              📦 {item.deliverTo || (item.warehouse?.name ? `${item.warehouse.name}: Receipts` : '')}
+            </Text>
+          </View>
+        )}
+
         {/* Extra info: Division & Source PO */}
         <View style={styles.metaRow}>
           {item.sourceDocument ? (
@@ -146,8 +180,8 @@ export default function Venderbills() {
             </View>
           ) : null}
           {item.division?.name ? (
-            <View style={styles.tag}>
-              <Text style={styles.tagText}>{item.division.name}</Text>
+            <View style={[styles.tag, { backgroundColor: '#EFF6FF' }]}>
+              <Text style={[styles.tagText, { color: '#1D4ED8' }]}>🏭 {item.division.name}</Text>
             </View>
           ) : null}
         </View>
@@ -392,6 +426,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: colors.text,
+  },
+  invNumber: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+    marginTop: 1,
   },
   billDate: {
     fontSize: 11,

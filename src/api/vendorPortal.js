@@ -35,10 +35,5 @@ export const vendorPortalApi = {
     const { data } = await client.patch('/vendor-portal/profile', payload);
     return data;
   },
-
-  syncFromOdoo: async () => {
-    const { data } = await client.post('/odoo/sync-vendors');
-    return data;
-  },
 };
 

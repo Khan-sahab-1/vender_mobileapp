@@ -16,15 +16,15 @@ const COMING_SOON = [
   {
     key: 'Sales',
     icon: '🛒',
-    title: 'Sales (SO)',
-    subtitle: 'Quotations & Customer Sales Orders',
-    screen: 'SalesOrdersList',
+    title: 'Sales',
+    subtitle: 'Customers, quotations & sales orders',
+    screen: 'SalesMenu',
   },
   {
     key: 'Purchase',
     icon: '🧾',
     title: 'Purchase',
-    subtitle: 'RFQs, purchase orders & receipts',
+    subtitle: 'Vendors, purchase orders & bills',
     screen: 'Purchasedashboard',
   },
   {
@@ -38,7 +38,7 @@ const COMING_SOON = [
     key: 'Settings',
     icon: '⚙️',
     title: 'Settings',
-    subtitle: 'Customers, vendors, taxes & users',
+    subtitle: 'Divisions, users & access control',
     screen: 'Settings',
   },
 ];

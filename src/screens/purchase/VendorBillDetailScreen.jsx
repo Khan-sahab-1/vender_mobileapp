@@ -15,12 +15,25 @@ import StateBadge from '../../components/StateBadge';
 import PickerModal from '../../components/PickerModal';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { vendorBillsApi, accountingApi } from '../../api/purchase';
+import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 
 function parseSafeDate(d) {
   if (!d) return new Date();
   const parsed = new Date(d);
   return isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function formatWarehouseDeliverTo(wh) {
+  if (!wh) return '';
+  const code = wh.code ? ` (${wh.code}: Receipts)` : ': Receipts';
+  return `${wh.name || 'Warehouse'}${code}`;
+}
+
+function formatWarehouseAddress(wh) {
+  if (!wh) return '';
+  const parts = [wh.address, wh.city, wh.country].filter(Boolean);
+  return parts.join(', ') || '';
 }
 
 export default function VendorBillDetailScreen({ route, navigation }) {
@@ -36,19 +49,33 @@ export default function VendorBillDetailScreen({ route, navigation }) {
   const [editForm, setEditForm] = useState(() => {
     if (!initialBill) {
       return {
-        invoiceDate: new Date().toISOString().slice(0, 10),
+        invoiceNumber: '',
+        deliverTo: '',
+        deliveryAddress: '',
+        receiptDate: new Date().toISOString().slice(0, 10),
+        billDate: new Date().toISOString().slice(0, 10),
         dueDate: '',
         sourceDocument: '',
         notes: '',
         vendorId: null,
         vendorName: '',
+        divisionId: null,
+        divisionName: '',
         warehouseId: null,
         warehouseName: '',
         lines: [],
       };
     }
+    const defaultDeliverTo = initialBill.deliverTo || formatWarehouseDeliverTo(initialBill.warehouse);
+    const defaultDeliveryAddress = initialBill.deliveryAddress || formatWarehouseAddress(initialBill.warehouse);
     return {
-      invoiceDate: initialBill.invoiceDate
+      invoiceNumber: initialBill.invoiceNumber || '',
+      deliverTo: defaultDeliverTo,
+      deliveryAddress: defaultDeliveryAddress,
+      receiptDate: initialBill.receiptDate
+        ? String(initialBill.receiptDate).slice(0, 10)
+        : (initialBill.createdAt ? String(initialBill.createdAt).slice(0, 10) : new Date().toISOString().slice(0, 10)),
+      billDate: initialBill.invoiceDate
         ? String(initialBill.invoiceDate).slice(0, 10)
         : new Date().toISOString().slice(0, 10),
       dueDate: initialBill.dueDate ? String(initialBill.dueDate).slice(0, 10) : '',
@@ -56,6 +83,8 @@ export default function VendorBillDetailScreen({ route, navigation }) {
       notes: initialBill.notes || '',
       vendorId: initialBill.vendorId || initialBill.vendor?.id,
       vendorName: initialBill.vendorName || initialBill.vendor?.name || '',
+      divisionId: initialBill.divisionId || initialBill.division?.id,
+      divisionName: initialBill.division?.name || (initialBill.division?.code ? `${initialBill.division.name} (${initialBill.division.code})` : ''),
       warehouseId: initialBill.warehouseId || initialBill.warehouse?.id,
       warehouseName: initialBill.warehouse?.name || '',
       lines: (initialBill.lines || []).map((l, index) => ({
@@ -73,8 +102,16 @@ export default function VendorBillDetailScreen({ route, navigation }) {
 
   const populateFormFromBill = useCallback((b) => {
     if (!b) return;
+    const defaultDeliverTo = b.deliverTo || formatWarehouseDeliverTo(b.warehouse);
+    const defaultDeliveryAddress = b.deliveryAddress || formatWarehouseAddress(b.warehouse);
     setEditForm({
-      invoiceDate: b.invoiceDate
+      invoiceNumber: b.invoiceNumber || '',
+      deliverTo: defaultDeliverTo,
+      deliveryAddress: defaultDeliveryAddress,
+      receiptDate: b.receiptDate
+        ? String(b.receiptDate).slice(0, 10)
+        : (b.createdAt ? String(b.createdAt).slice(0, 10) : new Date().toISOString().slice(0, 10)),
+      billDate: b.invoiceDate
         ? String(b.invoiceDate).slice(0, 10)
         : new Date().toISOString().slice(0, 10),
       dueDate: b.dueDate ? String(b.dueDate).slice(0, 10) : '',
@@ -82,6 +119,8 @@ export default function VendorBillDetailScreen({ route, navigation }) {
       notes: b.notes || '',
       vendorId: b.vendorId || b.vendor?.id,
       vendorName: b.vendorName || b.vendor?.name || '',
+      divisionId: b.divisionId || b.division?.id,
+      divisionName: b.division?.name || (b.division?.code ? `${b.division.name} (${b.division.code})` : ''),
       warehouseId: b.warehouseId || b.warehouse?.id,
       warehouseName: b.warehouse?.name || '',
       lines: (b.lines || []).map((l, index) => ({
@@ -99,7 +138,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
 
   // Date Picker State
   const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
-  const [activeDateField, setActiveDateField] = useState('invoiceDate');
+  const [activeDateField, setActiveDateField] = useState('receiptDate');
 
   // Generic Picker Modal (Vendor / Warehouse)
   const [pickerModal, setPickerModal] = useState({
@@ -245,10 +284,20 @@ export default function VendorBillDetailScreen({ route, navigation }) {
         vendorName: item.name,
       }));
     } else if (pickerModal.field === 'warehouse') {
+      const deliverTo = formatWarehouseDeliverTo(item);
+      const deliveryAddress = formatWarehouseAddress(item);
       setEditForm(prev => ({
         ...prev,
         warehouseId: item.id,
         warehouseName: item.name,
+        deliverTo: deliverTo || prev.deliverTo,
+        deliveryAddress: deliveryAddress || prev.deliveryAddress,
+      }));
+    } else if (pickerModal.field === 'division') {
+      setEditForm(prev => ({
+        ...prev,
+        divisionId: item.id,
+        divisionName: item.name || item.code || '',
       }));
     }
     setPickerModal(p => ({ ...p, visible: false }));
@@ -266,10 +315,15 @@ export default function VendorBillDetailScreen({ route, navigation }) {
       const payload = {
         vendorId: editForm.vendorId,
         vendorName: editForm.vendorName,
-        invoiceDate: editForm.invoiceDate ? new Date(editForm.invoiceDate).toISOString() : undefined,
+        invoiceNumber: editForm.invoiceNumber?.trim() || undefined,
+        deliverTo: editForm.deliverTo?.trim() || undefined,
+        deliveryAddress: editForm.deliveryAddress?.trim() || undefined,
+        receiptDate: editForm.receiptDate ? new Date(editForm.receiptDate).toISOString() : undefined,
+        divisionId: editForm.divisionId || undefined,
+        warehouseId: editForm.warehouseId || undefined,
+        invoiceDate: editForm.billDate ? new Date(editForm.billDate).toISOString() : undefined,
         dueDate: editForm.dueDate ? new Date(editForm.dueDate).toISOString() : undefined,
         sourceDocument: editForm.sourceDocument,
-        warehouseId: editForm.warehouseId,
         notes: editForm.notes,
         lines: editForm.lines.map(l => ({
           productId: l.productId,
@@ -311,10 +365,15 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 const payload = {
                   vendorId: editForm.vendorId,
                   vendorName: editForm.vendorName,
-                  invoiceDate: editForm.invoiceDate ? new Date(editForm.invoiceDate).toISOString() : undefined,
+                  invoiceNumber: editForm.invoiceNumber?.trim() || undefined,
+                  deliverTo: editForm.deliverTo?.trim() || undefined,
+                  deliveryAddress: editForm.deliveryAddress?.trim() || undefined,
+                  receiptDate: editForm.receiptDate ? new Date(editForm.receiptDate).toISOString() : undefined,
+                  divisionId: editForm.divisionId || undefined,
+                  warehouseId: editForm.warehouseId || undefined,
+                  invoiceDate: editForm.billDate ? new Date(editForm.billDate).toISOString() : undefined,
                   dueDate: editForm.dueDate ? new Date(editForm.dueDate).toISOString() : undefined,
                   sourceDocument: editForm.sourceDocument,
-                  warehouseId: editForm.warehouseId,
                   notes: editForm.notes,
                   lines: editForm.lines.map(l => ({
                     productId: l.productId,
@@ -488,36 +547,140 @@ export default function VendorBillDetailScreen({ route, navigation }) {
           )}
 
           {(billState === 'open' || billState === 'posted') && (
-            <TouchableOpacity
-              style={styles.btnPayment}
-              activeOpacity={0.8}
-              disabled={actionLoading}
-              onPress={() => setPaymentModalOpen(true)}>
-              <Text style={styles.btnPaymentText}>💳 Register Payment</Text>
-            </TouchableOpacity>
+            <View style={styles.validatedActionsRow}>
+              <TouchableOpacity
+                style={styles.btnPayment}
+                activeOpacity={0.8}
+                disabled={actionLoading}
+                onPress={() => setPaymentModalOpen(true)}>
+                <Text style={styles.btnPaymentText}>💳 Register Payment</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnVoucher}
+                activeOpacity={0.8}
+                onPress={() =>
+                  navigation.navigate(navigationScreen.VOUCHER, {
+                    bill,
+                    move: bill.accountMove,
+                    moveId: bill.accountMoveId,
+                  })
+                }>
+                <Text style={styles.btnVoucherText}>📑 Voucher</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {billState === 'paid' && (
-            <View style={styles.paidBadgeBanner}>
-              <Text style={styles.paidBadgeBannerText}>
-                ✓ Reconciled & Fully Paid (Residual: {bill.currency || 'INR'} 0.00)
-              </Text>
+            <View style={{ gap: spacing.xs }}>
+              <View style={styles.paidBadgeBanner}>
+                <Text style={styles.paidBadgeBannerText}>
+                  ✓ Reconciled & Fully Paid (Residual: {bill.currency || 'INR'} 0.00)
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.btnVoucherPaid}
+                activeOpacity={0.8}
+                onPress={() =>
+                  navigation.navigate(navigationScreen.VOUCHER, {
+                    bill,
+                    move: bill.accountMove,
+                    moveId: bill.accountMoveId,
+                  })
+                }>
+                <Text style={styles.btnVoucherPaidText}>📑 View Voucher</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
 
         {/* Header Details Fields (Always Structured Form Box) */}
         <View style={styles.editHeaderFields}>
+          {/* Row 1: Invoice Number * & Division */}
           <View style={styles.editRow}>
+            {/* Invoice Number (Supplier Ref) */}
+            <View style={styles.editFieldCol}>
+              <Text style={styles.editFieldLabel}>
+                Invoice Number <Text style={{ color: colors.danger, fontWeight: '900' }}>*</Text>
+              </Text>
+              <TextInput
+                style={styles.editInput}
+                editable={!isReadOnly}
+                value={editForm.invoiceNumber}
+                onChangeText={v => setEditForm(p => ({ ...p, invoiceNumber: v }))}
+                placeholder="e.g. INV/2026/0129"
+                placeholderTextColor={colors.textMuted}
+              />
+            </View>
+
+            {/* Division */}
+            <View style={styles.editFieldCol}>
+              <Text style={styles.editFieldLabel}>Division</Text>
+              <TouchableOpacity
+                style={styles.editDateField}
+                disabled={isReadOnly}
+                onPress={() =>
+                  setPickerModal({
+                    visible: true,
+                    title: 'Select Division',
+                    relation: 'divisions',
+                    field: 'division',
+                  })
+                }>
+                <Text style={styles.editDateFieldText} numberOfLines={1}>
+                  🏭 {editForm.divisionName || bill.division?.name || 'Select Division'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Row 2: Receipt Date & Bill Date */}
+          <View style={styles.editRow}>
+            {/* Receipt Date */}
+            <View style={styles.editFieldCol}>
+              <Text style={styles.editFieldLabel}>Receipt Date</Text>
+              <TouchableOpacity
+                style={styles.editDateField}
+                disabled={isReadOnly}
+                onPress={() => showDatePicker('receiptDate')}>
+                <Text style={styles.editDateFieldText}>
+                  📅 {editForm.receiptDate || 'Select Date'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Bill Date */}
             <View style={styles.editFieldCol}>
               <Text style={styles.editFieldLabel}>Bill Date</Text>
               <TouchableOpacity
                 style={styles.editDateField}
                 disabled={isReadOnly}
-                onPress={() => showDatePicker('invoiceDate')}>
+                onPress={() => showDatePicker('billDate')}>
                 <Text style={styles.editDateFieldText}>
-                  📅 {editForm.invoiceDate || 'Select Date'}
+                  📅 {editForm.billDate || 'Select Date'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Row 3: Deliver To & Due Date */}
+          <View style={styles.editRow}>
+            {/* Deliver To */}
+            <View style={styles.editFieldCol}>
+              <Text style={styles.editFieldLabel}>Deliver To</Text>
+              <TouchableOpacity
+                style={styles.editDateField}
+                disabled={isReadOnly}
+                onPress={() =>
+                  setPickerModal({
+                    visible: true,
+                    title: 'Select Destination Warehouse',
+                    relation: 'warehouses',
+                    field: 'warehouse',
+                  })
+                }>
+                <Text style={styles.editDateFieldText} numberOfLines={1}>
+                  📦 {editForm.deliverTo || editForm.warehouseName || bill.warehouse?.name || 'Select Destination'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -536,7 +699,22 @@ export default function VendorBillDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          <View style={styles.editRow}>
+          {/* Row 4: Delivery Address (e.g. WH street, city, country) */}
+          <View style={{ marginBottom: spacing.xs }}>
+            <Text style={styles.editFieldLabel}>Delivery Address</Text>
+            <TextInput
+              style={[styles.editInput, { minHeight: 44 }]}
+              editable={!isReadOnly}
+              multiline
+              value={editForm.deliveryAddress}
+              onChangeText={v => setEditForm(p => ({ ...p, deliveryAddress: v }))}
+              placeholder="Delivery destination address (e.g. warehouse address)..."
+              placeholderTextColor={colors.textMuted}
+            />
+          </View>
+
+          {/* Row 5: Source PO & Notes */}
+          <View style={[styles.editRow, { marginBottom: 0 }]}>
             {/* Source Document */}
             <View style={styles.editFieldCol}>
               <Text style={styles.editFieldLabel}>Source PO / Ref</Text>
@@ -545,43 +723,23 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 editable={!isReadOnly}
                 value={editForm.sourceDocument}
                 onChangeText={v => setEditForm(p => ({ ...p, sourceDocument: v }))}
-                placeholder="PO reference or vendor inv #"
+                placeholder="PO reference"
                 placeholderTextColor={colors.textMuted}
               />
             </View>
 
-            {/* Warehouse */}
+            {/* Internal Notes */}
             <View style={styles.editFieldCol}>
-              <Text style={styles.editFieldLabel}>Warehouse</Text>
-              <TouchableOpacity
-                style={styles.editDateField}
-                disabled={isReadOnly}
-                onPress={() =>
-                  setPickerModal({
-                    visible: true,
-                    title: 'Select Warehouse',
-                    relation: 'warehouses',
-                    field: 'warehouse',
-                  })
-                }>
-                <Text style={styles.editDateFieldText} numberOfLines={1}>
-                  🏢 {editForm.warehouseName || bill.warehouse?.name || 'Select Warehouse'}
-                </Text>
-              </TouchableOpacity>
+              <Text style={styles.editFieldLabel}>Notes / Terms</Text>
+              <TextInput
+                style={styles.editInput}
+                editable={!isReadOnly}
+                value={editForm.notes}
+                onChangeText={v => setEditForm(p => ({ ...p, notes: v }))}
+                placeholder="Internal notes or payment terms..."
+                placeholderTextColor={colors.textMuted}
+              />
             </View>
-          </View>
-
-          {/* Internal Notes */}
-          <View style={{ marginTop: spacing.xs }}>
-            <Text style={styles.editFieldLabel}>Notes / Terms</Text>
-            <TextInput
-              style={[styles.editInput, { height: 38 }]}
-              editable={!isReadOnly}
-              value={editForm.notes}
-              onChangeText={v => setEditForm(p => ({ ...p, notes: v }))}
-              placeholder="Internal notes or terms..."
-              placeholderTextColor={colors.textMuted}
-            />
           </View>
         </View>
 
@@ -598,10 +756,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
 
       {/* Tabs */}
       <View style={styles.tabBarContainer}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabBarScroll}>
+        <View style={styles.tabBarScroll}>
           <TouchableOpacity
             style={[styles.tabItem, activeTab === 'lines' && styles.tabItemActive]}
             onPress={() => setActiveTab('lines')}>
@@ -617,23 +772,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
               Other Info
             </Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'journal_items' && styles.tabItemActive]}
-            onPress={() => setActiveTab('journal_items')}>
-            <Text style={[styles.tabText, activeTab === 'journal_items' && styles.tabTextActive]}>
-              Journal Items ({moveLines.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'partner_ledger' && styles.tabItemActive]}
-            onPress={() => setActiveTab('partner_ledger')}>
-            <Text style={[styles.tabText, activeTab === 'partner_ledger' && styles.tabTextActive]}>
-              Vendor Ledger
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
+        </View>
       </View>
 
       <ScrollView
@@ -835,216 +974,109 @@ export default function VendorBillDetailScreen({ route, navigation }) {
               </View>
 
               {/* Journal Entry # if posted */}
-              {Boolean(bill.accountMove?.name) && (
+              {Boolean(bill.accountMove?.name || bill.accountMoveId) && (
                 <>
                   <View style={styles.cardDivider} />
-                  <View style={styles.otherInfoRow}>
+                  <TouchableOpacity
+                    style={styles.otherInfoRow}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      navigation.navigate(navigationScreen.VOUCHER, {
+                        bill,
+                        moveId: bill.accountMoveId,
+                        move: bill.accountMove,
+                      })
+                    }>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.otherInfoLabel}>General Ledger Entry Number</Text>
-                      <Text style={styles.otherInfoValBold}>{bill.accountMove.name}</Text>
+                      <Text style={styles.otherInfoLabel}>General Ledger Entry (Voucher)</Text>
+                      <Text style={[styles.otherInfoValBold, { color: colors.primary }]}>
+                        📑 {bill.accountMove?.name || 'Posted Accounting Voucher'}
+                      </Text>
+                      <Text style={styles.otherInfoSub}>Tap to view accounting voucher</Text>
                     </View>
                     <View style={styles.postedBadge}>
-                      <Text style={styles.postedBadgeText}>Posted</Text>
+                      <Text style={styles.postedBadgeText}>View Voucher →</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 </>
               )}
             </View>
 
-            {/* 2. Additional Procurement Details (ONLY NON-EMPTY FIELDS) */}
-            {(Boolean(bill.vendor?.paymentTerm?.name) ||
-              Boolean(bill.sourceDocument) ||
-              Boolean(bill.division?.name) ||
-              Boolean(bill.warehouse?.name) ||
-              Boolean(bill.notes)) && (
-              <View style={[styles.card, shadows.sm, { marginTop: spacing.md }]}>
-                <Text style={styles.cardHeaderTitle}>ADDITIONAL PROCUREMENT DETAILS</Text>
+            {/* 2. Additional Procurement Details */}
+            <View style={[styles.card, shadows.sm, { marginTop: spacing.md }]}>
+              <Text style={styles.cardHeaderTitle}>ADDITIONAL PROCUREMENT DETAILS</Text>
 
-                {Boolean(bill.vendor?.paymentTerm?.name) && (
-                  <View style={styles.procureRow}>
-                    <Text style={styles.procureLabel}>Payment Terms</Text>
-                    <Text style={styles.procureVal}>{bill.vendor.paymentTerm.name}</Text>
-                  </View>
-                )}
-
-                {Boolean(bill.sourceDocument) && (
-                  <View style={styles.procureRow}>
-                    <Text style={styles.procureLabel}>Source Document</Text>
-                    <Text style={styles.procureVal}>{bill.sourceDocument}</Text>
-                  </View>
-                )}
-
-                {Boolean(bill.division?.name) && (
-                  <View style={styles.procureRow}>
-                    <Text style={styles.procureLabel}>Division</Text>
-                    <Text style={styles.procureVal}>{bill.division.name}</Text>
-                  </View>
-                )}
-
-                {Boolean(bill.warehouse?.name) && (
-                  <View style={styles.procureRow}>
-                    <Text style={styles.procureLabel}>Receiving Warehouse</Text>
-                    <Text style={styles.procureVal}>{bill.warehouse.name}</Text>
-                  </View>
-                )}
-
-                {Boolean(bill.notes) && (
-                  <View style={styles.procureRow}>
-                    <Text style={styles.procureLabel}>Terms / Internal Notes</Text>
-                    <Text style={styles.procureVal}>{bill.notes}</Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* ============================================================== */}
-        {/* TAB 3: JOURNAL ITEMS (Double-Entry General Ledger)             */}
-        {/* ============================================================== */}
-        {activeTab === 'journal_items' && (
-          <View style={styles.tabContent}>
-            <View style={[styles.card, shadows.sm]}>
-              <View style={styles.journalHeaderRow}>
-                <View>
-                  <Text style={styles.cardHeaderTitle}>GENERAL LEDGER JOURNAL ENTRY</Text>
-                  <Text style={styles.journalSubTitle}>
-                    Entry #: {bill.accountMove?.name || 'Not posted yet (Draft)'}
+              {Boolean(bill.invoiceNumber || editForm.invoiceNumber) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Invoice Number</Text>
+                  <Text style={[styles.procureVal, { fontWeight: '700', color: colors.primary }]}>
+                    {bill.invoiceNumber || editForm.invoiceNumber}
                   </Text>
-                </View>
-                {moveLines.length > 0 && (
-                  <View style={styles.balancedPill}>
-                    <Text style={styles.balancedPillText}>✓ Balanced</Text>
-                  </View>
-                )}
-              </View>
-
-              {moveLines.length === 0 ? (
-                <View style={styles.emptyJournalBox}>
-                  <Text style={styles.emptyJournalEmoji}>⚖️</Text>
-                  <Text style={styles.emptyJournalText}>
-                    No journal items posted yet.
-                  </Text>
-                  <Text style={styles.emptyJournalSub}>
-                    Tap "Validate Bill" above to post balanced Double-Entry entries (Dr Expense, Cr Accounts Payable).
-                  </Text>
-                </View>
-              ) : (
-                <View>
-                  <View style={styles.tableHeader}>
-                    <Text style={[styles.thCell, { flex: 2 }]}>Account</Text>
-                    <Text style={[styles.thCell, { flex: 1, textAlign: 'right' }]}>Debit</Text>
-                    <Text style={[styles.thCell, { flex: 1, textAlign: 'right' }]}>Credit</Text>
-                  </View>
-
-                  {moveLines.map(ml => {
-                    const accName = ml.account
-                      ? `${ml.account.code} · ${ml.account.name}`
-                      : 'Account';
-                    return (
-                      <View key={ml.id} style={styles.tableRow}>
-                        <View style={{ flex: 2 }}>
-                          <Text style={styles.accNameText}>{accName}</Text>
-                          {ml.reconciled && (
-                            <Text style={styles.reconciledTag}>✓ Reconciled</Text>
-                          )}
-                        </View>
-                        <Text style={[styles.drCrText, { flex: 1, textAlign: 'right' }]}>
-                          {Number(ml.debit) > 0 ? `₹${Number(ml.debit).toFixed(2)}` : '—'}
-                        </Text>
-                        <Text style={[styles.drCrText, { flex: 1, textAlign: 'right' }]}>
-                          {Number(ml.credit) > 0 ? `₹${Number(ml.credit).toFixed(2)}` : '—'}
-                        </Text>
-                      </View>
-                    );
-                  })}
-
-                  <View style={styles.tableFooter}>
-                    <Text style={[styles.tfCell, { flex: 2 }]}>TOTALS</Text>
-                    <Text style={[styles.tfCell, { flex: 1, textAlign: 'right' }]}>
-                      ₹{moveLines.reduce((s, l) => s + Number(l.debit || 0), 0).toFixed(2)}
-                    </Text>
-                    <Text style={[styles.tfCell, { flex: 1, textAlign: 'right' }]}>
-                      ₹{moveLines.reduce((s, l) => s + Number(l.credit || 0), 0).toFixed(2)}
-                    </Text>
-                  </View>
                 </View>
               )}
-            </View>
-          </View>
-        )}
 
-        {/* ============================================================== */}
-        {/* TAB 4: VENDOR GENERAL LEDGER                                   */}
-        {/* ============================================================== */}
-        {activeTab === 'partner_ledger' && (
-          <View style={styles.tabContent}>
-            <View style={[styles.card, shadows.sm]}>
-              <Text style={styles.cardHeaderTitle}>VENDOR OUTSTANDING LEDGER</Text>
-              <Text style={styles.journalSubTitle}>
-                Partner: {bill.vendorName || bill.vendor?.name}
-              </Text>
-
-              {loadingLedger ? (
-                <ActivityIndicator style={{ marginVertical: 20 }} color={colors.primary} />
-              ) : partnerLedger ? (
-                <View>
-                  <View style={styles.ledgerSummaryCard}>
-                    <View style={styles.ledgerSummaryItem}>
-                      <Text style={styles.ledgerSummaryLabel}>Total Debits</Text>
-                      <Text style={styles.ledgerSummaryVal}>
-                        ₹{Number(partnerLedger.totalDebit || 0).toFixed(2)}
-                      </Text>
-                    </View>
-                    <View style={styles.ledgerSummaryDivider} />
-                    <View style={styles.ledgerSummaryItem}>
-                      <Text style={styles.ledgerSummaryLabel}>Total Credits</Text>
-                      <Text style={styles.ledgerSummaryVal}>
-                        ₹{Number(partnerLedger.totalCredit || 0).toFixed(2)}
-                      </Text>
-                    </View>
-                    <View style={styles.ledgerSummaryDivider} />
-                    <View style={styles.ledgerSummaryItem}>
-                      <Text style={styles.ledgerSummaryLabel}>Net Balance Due</Text>
-                      <Text
-                        style={[
-                          styles.ledgerSummaryVal,
-                          {
-                            color:
-                              partnerLedger.balance === 0 ? colors.secondary : colors.danger,
-                          },
-                        ]}>
-                        ₹{Math.abs(Number(partnerLedger.balance || 0)).toFixed(2)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={[styles.cardHeaderTitle, { marginTop: spacing.md }]}>
-                    TRANSACTION HISTORY
+              {Boolean(bill.receiptDate || editForm.receiptDate) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Receipt Date</Text>
+                  <Text style={styles.procureVal}>
+                    {String(bill.receiptDate || editForm.receiptDate).slice(0, 10)}
                   </Text>
-                  {(partnerLedger.lines || []).map((pl, i) => (
-                    <View key={pl.id || i} style={styles.ledgerItemRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.ledgerEntryName}>
-                          {pl.move?.name || 'Entry'} ({pl.move?.ref || 'PO'})
-                        </Text>
-                        <Text style={styles.ledgerDate}>
-                          {pl.move?.date ? String(pl.move.date).slice(0, 10) : ''}
-                        </Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.ledgerDrCr}>
-                          Dr: ₹{Number(pl.debit || 0).toFixed(2)} • Cr: ₹{Number(pl.credit || 0).toFixed(2)}
-                        </Text>
-                        {pl.reconciled && (
-                          <Text style={styles.reconciledTag}>✓ Reconciled</Text>
-                        )}
-                      </View>
-                    </View>
-                  ))}
                 </View>
-              ) : (
-                <Text style={styles.emptyJournalSub}>No ledger transactions found.</Text>
+              )}
+
+              {Boolean(bill.deliverTo || editForm.deliverTo) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Deliver To</Text>
+                  <Text style={[styles.procureVal, { fontWeight: '700' }]}>
+                    📦 {bill.deliverTo || editForm.deliverTo}
+                  </Text>
+                </View>
+              )}
+
+              {Boolean(bill.deliveryAddress || editForm.deliveryAddress) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Delivery Address</Text>
+                  <Text style={styles.procureVal}>
+                    {bill.deliveryAddress || editForm.deliveryAddress}
+                  </Text>
+                </View>
+              )}
+
+              {Boolean(bill.division?.name || editForm.divisionName) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Division</Text>
+                  <Text style={styles.procureVal}>
+                    🏭 {bill.division?.name || editForm.divisionName}
+                  </Text>
+                </View>
+              )}
+
+              {Boolean(bill.invoiceDate) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Bill Date</Text>
+                  <Text style={styles.procureVal}>{String(bill.invoiceDate).slice(0, 10)}</Text>
+                </View>
+              )}
+
+              {Boolean(bill.dueDate) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Due Date</Text>
+                  <Text style={styles.procureVal}>{String(bill.dueDate).slice(0, 10)}</Text>
+                </View>
+              )}
+
+              {Boolean(bill.sourceDocument) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Source Document</Text>
+                  <Text style={styles.procureVal}>{bill.sourceDocument}</Text>
+                </View>
+              )}
+
+              {Boolean(bill.vendor?.paymentTerm?.name) && (
+                <View style={styles.procureRow}>
+                  <Text style={styles.procureLabel}>Payment Terms</Text>
+                  <Text style={styles.procureVal}>{bill.vendor.paymentTerm.name}</Text>
+                </View>
               )}
             </View>
           </View>
@@ -1224,14 +1256,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  validatedActionsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   btnPayment: {
+    flex: 1,
     backgroundColor: colors.secondary,
     paddingVertical: 10,
     borderRadius: radius.sm,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   btnPaymentText: {
     color: colors.textInverted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  btnVoucher: {
+    flex: 1,
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnVoucherText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  btnVoucherPaid: {
+    backgroundColor: '#0284C7',
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+  },
+  btnVoucherPaidText: {
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
   },

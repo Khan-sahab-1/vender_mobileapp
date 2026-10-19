@@ -6,6 +6,9 @@ export default function ListRow({
   title,
   subtitle,
   badge,
+  onBadgePress,
+  badgeStyle,
+  badgeTextStyle,
   onPress,
   onLongPress,
   icon,
@@ -37,9 +40,18 @@ export default function ListRow({
       </View>
 
       {badge ? (
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{badge}</Text>
-        </View>
+        onBadgePress ? (
+          <TouchableOpacity
+            style={[styles.badge, badgeStyle]}
+            onPress={onBadgePress}
+            activeOpacity={0.6}>
+            <Text style={[styles.badgeText, badgeTextStyle]}>{badge}</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.badge, badgeStyle]}>
+            <Text style={[styles.badgeText, badgeTextStyle]}>{badge}</Text>
+          </View>
+        )
       ) : null}
 
       {rightText ? (

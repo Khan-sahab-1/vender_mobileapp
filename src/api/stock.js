@@ -14,6 +14,13 @@ export const stockQuantsApi = {
   },
 };
 
+export const productsStockApi = {
+  getLocationsStock: async productId => {
+    const { data } = await client.get(`/products/${productId}/locations-stock`);
+    return data;
+  },
+};
+
 const baseMoves = createCrudApi('/stock-moves');
 export const stockMovesApi = {
   ...baseMoves,

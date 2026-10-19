@@ -20,11 +20,6 @@ import { getErrorMessage } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { colors, radius, spacing, typography } from '../../theme/theme';
 
-const INVENTORY_TYPE_OPTIONS = [
-  { value: 'stock_inventory', label: 'Stock Inventory' },
-  { value: 'stock_journal', label: 'Stock Journal' },
-];
-
 const INVENTORY_OF_OPTIONS = [
   { value: 'all_products', label: 'All products' },
   { value: 'category', label: 'One product category' },
@@ -38,7 +33,6 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
   const [reference, setReference] = useState('');
   const [warehouse, setWarehouse] = useState(null);
   const [location, setLocation] = useState(null);
-  const [inventoryType, setInventoryType] = useState('stock_inventory');
   const [inventoryOf, setInventoryOf] = useState('all_products');
   const [category, setCategory] = useState(null);
   const [product, setProduct] = useState(null);
@@ -182,7 +176,8 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
         locationId: locId,
         locationName: location?.label || 'Internal Location',
         theoreticalQuantity: theoreticalQty,
-        countedQuantity: theoreticalQty,
+        adjustmentQuantity: 0,
+        reason: '',
       };
 
       setLines(prev => [...prev, newLine]);
@@ -197,19 +192,30 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
     setLines(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleCountChange = (index, value) => {
-    setLines(prev =>
-      prev.map((l, i) => (i === index ? { ...l, countedQuantity: value } : l)),
-    );
-  };
-
-  const handleAdjustCount = (index, delta) => {
+  const handleAdjustDelta = (index, delta) => {
     setLines(prev =>
       prev.map((l, i) => {
         if (i !== index) return l;
-        const current = Number(l.countedQuantity || 0);
-        const updated = Math.max(0, current + delta);
-        return { ...l, countedQuantity: updated };
+        const current = Number(l.adjustmentQuantity || 0);
+        const theoretical = Number(l.theoreticalQuantity || 0);
+        const nextAdj = current + delta;
+        // Don't allow reducing below -theoretical (stock can't be negative)
+        const capped = Math.max(-theoretical, nextAdj);
+        return { ...l, adjustmentQuantity: capped };
+      }),
+    );
+  };
+
+  const handleAdjustmentChange = (index, text) => {
+    setLines(prev =>
+      prev.map((l, i) => {
+        if (i !== index) return l;
+        if (text === '' || text === '-') {
+          return { ...l, adjustmentQuantity: text };
+        }
+        const parsed = Number(text);
+        if (isNaN(parsed)) return l;
+        return { ...l, adjustmentQuantity: parsed };
       }),
     );
   };
@@ -217,6 +223,12 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
   const handleLotNumberChange = (index, text) => {
     setLines(prev =>
       prev.map((l, i) => (i === index ? { ...l, lotNumber: text } : l)),
+    );
+  };
+
+  const handleReasonChange = (index, text) => {
+    setLines(prev =>
+      prev.map((l, i) => (i === index ? { ...l, reason: text } : l)),
     );
   };
 
@@ -238,13 +250,24 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
       return null;
     }
 
+    // Require reason for any negative stock adjustment line
+    for (const l of lines) {
+      const adj = Number(l.adjustmentQuantity || 0);
+      if (adj < 0 && (!l.reason || !l.reason.trim())) {
+        Alert.alert(
+          'Reason Required for Minus Stock',
+          `Please provide a reason for deducting stock on "${l.productName}" (e.g. Damaged, Expired, Lost) before proceeding.`,
+        );
+        return null;
+      }
+    }
+
     const payload = {
       reference: reference.trim() || undefined,
       name: reference.trim() || undefined,
       warehouseId: warehouse.id,
       locationId: location.id,
       companyId: user?.companyId,
-      inventoryType,
       inventoryOf,
       categoryId: inventoryOf === 'category' ? category.id : undefined,
       productId: inventoryOf === 'product' ? product.id : undefined,
@@ -255,12 +278,18 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
     };
 
     if (lines.length > 0) {
-      payload.lines = lines.map(l => ({
-        productId: l.productId,
-        locationId: l.locationId || location.id,
-        lotNumber: l.lotNumber?.trim() || undefined,
-        countedQuantity: Number(l.countedQuantity || 0),
-      }));
+      payload.lines = lines.map(l => {
+        const theoretical = Number(l.theoreticalQuantity || 0);
+        const adj = Number(l.adjustmentQuantity || 0);
+        return {
+          productId: l.productId,
+          locationId: l.locationId || location.id,
+          lotNumber: l.lotNumber?.trim() || undefined,
+          adjustmentQuantity: adj,
+          countedQuantity: theoretical + adj,
+          reason: l.reason?.trim() || undefined,
+        };
+      });
     }
 
     return payload;
@@ -385,22 +414,9 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
           />
         </View>
 
-        {/* Scope and Type Card */}
+        {/* Adjustment Scope Card */}
         <View style={styles.formCard}>
-          <Text style={styles.cardHeader}>Type & Scope</Text>
-
-          {/* Inventory Type */}
-          <FormField
-            field={{
-              name: 'inventoryType',
-              label: 'Inventory Type',
-              type: 'select',
-              options: INVENTORY_TYPE_OPTIONS,
-              required: true,
-            }}
-            value={inventoryType}
-            onChange={setInventoryType}
-          />
+          <Text style={styles.cardHeader}>Adjustment Scope</Text>
 
           {/* Inventory of */}
           <FormField
@@ -503,8 +519,8 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
           ) : (
             lines.map((line, index) => {
               const theoretical = Number(line.theoreticalQuantity || 0);
-              const counted = Number(line.countedQuantity || 0);
-              const diff = counted - theoretical;
+              const adj = Number(line.adjustmentQuantity || 0);
+              const newOnHand = theoretical + adj;
 
               return (
                 <View key={line.id} style={styles.lineItemCard}>
@@ -530,18 +546,22 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
                     <View
                       style={[
                         styles.diffBadge,
-                        diff > 0 && styles.diffSurplus,
-                        diff < 0 && styles.diffLoss,
-                        diff === 0 && styles.diffZero,
+                        adj > 0 && styles.diffSurplus,
+                        adj < 0 && styles.diffLoss,
+                        adj === 0 && styles.diffZero,
                       ]}>
                       <Text
                         style={[
                           styles.diffText,
-                          diff > 0 && styles.diffSurplusText,
-                          diff < 0 && styles.diffLossText,
-                          diff === 0 && styles.diffZeroText,
+                          adj > 0 && styles.diffSurplusText,
+                          adj < 0 && styles.diffLossText,
+                          adj === 0 && styles.diffZeroText,
                         ]}>
-                        Diff: {diff > 0 ? `+${diff}` : diff}
+                        {adj > 0
+                          ? `+${adj} (Add)`
+                          : adj < 0
+                          ? `${adj} (Deduct)`
+                          : '0 (No Change)'}
                       </Text>
                     </View>
 
@@ -565,40 +585,132 @@ export default function InventoryAdjustmentFormScreen({ navigation }) {
                     />
                   </View>
 
-                  {/* Counts Row: Theoretical Qty -> Real Quantity */}
+                  {/* Counts Row: Current On Hand -> Adjust (+/-) -> New On Hand */}
                   <View style={styles.countsRow}>
                     <View style={styles.countBlock}>
-                      <Text style={styles.countBlockLabel}>Theoretical Qty</Text>
+                      <Text style={styles.countBlockLabel}>Current On Hand</Text>
                       <Text style={styles.theoreticalVal}>{theoretical}</Text>
                     </View>
 
                     <Text style={styles.countArrow}>➔</Text>
 
                     <View style={styles.countBlock}>
-                      <Text style={styles.countBlockLabel}>Real Quantity</Text>
-                      <Text style={styles.countBlockSub}>(Counted)</Text>
+                      <Text style={styles.countBlockLabel}>Adjust (+/-)</Text>
+                      <Text style={styles.countBlockSub}>0 = No change</Text>
                       <View style={styles.qtyControlWrap}>
                         <TouchableOpacity
                           style={styles.qtyBtn}
-                          onPress={() => handleAdjustCount(index, -1)}>
+                          onPress={() => handleAdjustDelta(index, -1)}>
                           <Text style={styles.qtyBtnText}>-</Text>
                         </TouchableOpacity>
                         <TextInput
                           style={styles.qtyInput}
                           keyboardType="numeric"
-                          value={String(line.countedQuantity ?? '')}
-                          onChangeText={text =>
-                            handleCountChange(index, text.replace(/[^0-9.-]/g, ''))
-                          }
+                          value={String(line.adjustmentQuantity ?? 0)}
+                          onChangeText={text => handleAdjustmentChange(index, text)}
                         />
                         <TouchableOpacity
                           style={styles.qtyBtn}
-                          onPress={() => handleAdjustCount(index, 1)}>
+                          onPress={() => handleAdjustDelta(index, 1)}>
                           <Text style={styles.qtyBtnText}>+</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
+
+                    <Text style={styles.countArrow}>=</Text>
+
+                    <View style={styles.countBlock}>
+                      <Text style={styles.countBlockLabel}>New On Hand</Text>
+                      <Text
+                        style={[
+                          styles.theoreticalVal,
+                          adj > 0 && { color: '#057A60', fontWeight: '800' },
+                          adj < 0 && { color: '#B42323', fontWeight: '800' },
+                        ]}>
+                        {newOnHand}
+                      </Text>
+                    </View>
                   </View>
+
+                  {/* If minus (stock reduction): prompt / require reason */}
+                  {adj < 0 && (
+                    <View style={styles.reasonCardBox}>
+                      <View style={styles.reasonHeaderRow}>
+                        <Text style={styles.reasonTitle}>
+                          ⚠️ Reason for Stock Reduction (Required)
+                        </Text>
+                      </View>
+                      <Text style={styles.reasonSubtitle}>
+                        Why are {Math.abs(adj)} unit(s) being deducted? Select or type reason:
+                      </Text>
+                      <View style={styles.reasonChipsWrap}>
+                        {[
+                          'Damaged / Broken',
+                          'Expired',
+                          'Lost / Stolen',
+                          'Physical Recount',
+                          'Scrap / Wastage',
+                        ].map(preset => {
+                          const isSelected = line.reason === preset;
+                          return (
+                            <TouchableOpacity
+                              key={preset}
+                              style={[
+                                styles.reasonChip,
+                                isSelected && styles.reasonChipSelected,
+                              ]}
+                              onPress={() => handleReasonChange(index, preset)}>
+                              <Text
+                                style={[
+                                  styles.reasonChipText,
+                                  isSelected && styles.reasonChipTextSelected,
+                                ]}>
+                                {preset}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      <TextInput
+                        style={styles.reasonInput}
+                        value={line.reason}
+                        onChangeText={text => handleReasonChange(index, text)}
+                        placeholder="Or type specific remarks (e.g. broken in transit)..."
+                        placeholderTextColor={colors.textMuted}
+                      />
+                    </View>
+                  )}
+
+                  {/* Double-Entry Movement Preview on Validate */}
+                  {adj !== 0 && (
+                    <View style={styles.stockMovePreviewBox}>
+                      <Text style={styles.previewTitle}>
+                        ⚡ Double-Entry Move on Validate:
+                      </Text>
+                      <View style={styles.previewRouteRow}>
+                        <Text style={styles.previewLoc} numberOfLines={1}>
+                          {adj > 0
+                            ? 'Virtual Locations/Inventory Adjustment'
+                            : line.locationName || location?.label || 'apex 1 / stock'}
+                        </Text>
+                        <Text style={styles.previewArrow}> ➔ </Text>
+                        <Text style={styles.previewLoc} numberOfLines={1}>
+                          {adj > 0
+                            ? line.locationName || location?.label || 'apex 1 / stock'
+                            : 'Virtual Locations/Inventory Adjustment'}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.previewQty,
+                          adj > 0 ? styles.gainText : styles.lossText,
+                        ]}>
+                        {adj > 0
+                          ? `+${adj} Units will be added to warehouse`
+                          : `${Math.abs(adj)} Units will be deducted from warehouse`}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               );
             })
@@ -987,5 +1099,106 @@ const styles = StyleSheet.create({
     marginHorizontal: 3,
     padding: 0,
     fontSize: 13,
+  },
+  stockMovePreviewBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    padding: spacing.xs + 3,
+    marginTop: spacing.xs + 2,
+  },
+  previewTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    marginBottom: 2,
+  },
+  previewRouteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  previewLoc: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1E40AF',
+    maxWidth: '45%',
+  },
+  previewArrow: {
+    fontSize: 12,
+    color: '#1D4ED8',
+    fontWeight: 'bold',
+  },
+  previewQty: {
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  gainText: {
+    color: '#057A60',
+  },
+  lossText: {
+    color: '#B42323',
+  },
+  reasonCardBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    padding: spacing.sm,
+    marginTop: spacing.xs + 3,
+  },
+  reasonHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  reasonTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  reasonSubtitle: {
+    fontSize: 10,
+    color: '#7F1D1D',
+    marginBottom: spacing.xs,
+  },
+  reasonChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: spacing.xs,
+  },
+  reasonChip: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: spacing.sm - 1,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+  },
+  reasonChipSelected: {
+    backgroundColor: '#DC2626',
+    borderColor: '#DC2626',
+  },
+  reasonChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  reasonChipTextSelected: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  reasonInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    fontSize: 11,
+    color: colors.text,
   },
 });

@@ -9,12 +9,11 @@ import {
   RefreshControl,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { purchaseOrdersApi, vendorBillsApi } from '../../api/purchase';
-import { vendorPortalApi } from '../../api/vendorPortal';
+import client from '../../api/client';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 
 function Touchable({ onPress, style, children, label }) {
@@ -50,59 +49,28 @@ export default function Purchasedeshboard() {
     toApprove: 0,
     openBills: 0,
     paidBills: 0,
+    totalVendors: 0,
   });
   const [refreshing, setRefreshing] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-
-  const handleSyncOdoo = () => {
-    if (syncing) return;
-    Alert.alert(
-      'Sync Vendors from Odoo',
-      'Connect to Odoo ERP (192.168.1.6:8070) and import/update supplier accounts for the Vendor App?\n\nDefault login password: vendor123',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sync Now',
-          onPress: async () => {
-            try {
-              setSyncing(true);
-              const res = await vendorPortalApi.syncFromOdoo();
-              Alert.alert(
-                'Sync Complete ✅',
-                `Odoo suppliers found: ${res.totalOdooSuppliers}\n` +
-                `• Imported: ${res.importedCount}\n` +
-                `• Updated: ${res.updatedCount}\n\n` +
-                `Vendors can log into the Vendor App using their email and password: vendor123`
-              );
-            } catch (err) {
-              Alert.alert(
-                'Sync Failed ❌',
-                err?.response?.data?.message || err.message || 'Could not connect to Odoo ERP.'
-              );
-            } finally {
-              setSyncing(false);
-            }
-          },
-        },
-      ]
-    );
-  };
 
   const fetchStats = useCallback(async () => {
     try {
-      const [posRes, billsRes] = await Promise.all([
+      const [posRes, billsRes, vendorsRes] = await Promise.all([
         purchaseOrdersApi.list({ limit: 100 }).catch(() => ({ data: [] })),
         vendorBillsApi.list({ limit: 100 }).catch(() => ({ data: [] })),
+        client.get('/partners', { params: { isVendor: true, limit: 1 } }).catch(() => ({ data: { total: 0 } })),
       ]);
 
       const pos = Array.isArray(posRes?.data) ? posRes.data : [];
       const bills = Array.isArray(billsRes?.data) ? billsRes.data : [];
+      const totalVendors = vendorsRes?.data?.total ?? 0;
 
       setStats({
         totalPos: pos.length,
         toApprove: pos.filter(p => p.state === 'to_approve').length,
         openBills: bills.filter(b => b.state === 'open' || b.state === 'draft').length,
         paidBills: bills.filter(b => b.state === 'paid').length,
+        totalVendors,
       });
     } catch {
       // keep fallback
@@ -229,30 +197,29 @@ export default function Purchasedeshboard() {
         </View>
       </Touchable>
 
-      {/* Module 3: Odoo Vendor Portal Integration */}
+      {/* Master Data Section */}
+      <Text style={[styles.sectionHeading, { marginTop: spacing.lg }]}>MASTER DATA</Text>
+
+      {/* Vendors */}
       <Touchable
-        onPress={handleSyncOdoo}
-        label="Sync Odoo Vendors"
+        onPress={() => navigation.navigate('EntityList', { entityKey: 'vendors' })}
+        label="Vendors"
         style={styles.moduleCardOuter}>
         <View style={[styles.moduleCard, shadows.sm]}>
-          <View style={[styles.iconBox, { backgroundColor: '#F3E8FF' }]}>
-            {syncing ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={styles.iconEmoji}>🔄</Text>
-            )}
+          <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
+            <Text style={styles.iconEmoji}>🚚</Text>
           </View>
           <View style={styles.moduleInfo}>
             <View style={styles.moduleTitleRow}>
-              <Text style={styles.moduleTitle}>Sync Vendors from Odoo</Text>
-              <View style={[styles.countBadgeInfo, { backgroundColor: '#F3E8FF' }]}>
-                <Text style={[styles.countBadgeInfoText, { color: '#7E22CE' }]}>Odoo 11</Text>
+              <Text style={styles.moduleTitle}>Vendors</Text>
+              <View style={[styles.countBadgeInfo, { backgroundColor: '#FFEDD5' }]}>
+                <Text style={[styles.countBadgeInfoText, { color: '#C2410C' }]}>
+                  {stats.totalVendors > 0 ? `${stats.totalVendors} suppliers` : 'Suppliers'}
+                </Text>
               </View>
             </View>
             <Text style={styles.moduleDesc}>
-              {syncing
-                ? 'Connecting to Odoo ERP (192.168.1.6:8070)...'
-                : 'Import suppliers from Odoo ERP & auto-generate vendor portal mobile logins.'}
+              Manage supplier profiles, addresses, contact persons, GSTIN and bank details.
             </Text>
           </View>
           <Text style={styles.chevron}>›</Text>

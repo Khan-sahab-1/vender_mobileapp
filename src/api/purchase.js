@@ -108,4 +108,9 @@ export const accountingApi = {
     const { data } = await client.get(`/account-moves/partner-ledger/${partnerId}`);
     return data; // { partnerId, totalDebit, totalCredit, balance, lines: [...] }
   },
+
+  getMoveById: async (id) => {
+    const { data } = await client.get(`/account-moves/${id}`);
+    return data;
+  },
 };

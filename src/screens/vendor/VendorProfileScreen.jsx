@@ -107,14 +107,6 @@ export default function VendorProfileScreen({ navigation }) {
           </View>
           <Text style={styles.vendorName}>{profile?.name || user?.name}</Text>
           <Text style={styles.vendorEmail}>{profile?.email || user?.email}</Text>
-
-          {Boolean(profile?.odooPartnerId) && (
-            <View style={styles.odooBadge}>
-              <Text style={styles.odooBadgeText}>
-                ✓ Synced with Odoo ERP (Partner #{profile.odooPartnerId})
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Business & Contact Details */}

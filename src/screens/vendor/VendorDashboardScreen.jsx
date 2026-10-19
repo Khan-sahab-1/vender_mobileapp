@@ -87,12 +87,6 @@ export default function VendorDashboardScreen({ navigation }) {
               <Text style={styles.gstinPillText}>GSTIN: {vendor.gstin}</Text>
             </View>
           )}
-
-          {Boolean(vendor.odooId) && (
-            <View style={styles.odooPill}>
-              <Text style={styles.odooPillText}>✓ Connected with Odoo ERP (ID: #{vendor.odooId})</Text>
-            </View>
-          )}
         </View>
 
         {/* 4 Stats Grid */}

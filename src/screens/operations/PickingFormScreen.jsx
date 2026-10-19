@@ -45,6 +45,7 @@ export default function PickingFormScreen({ route, navigation }) {
     navigation.setOptions({ title: TYPE_TITLES[pickingType] ?? 'New Transfer' });
   }, [navigation, pickingType]);
 
+  const [operationType, setOperationType] = useState(null);
   const [warehouse, setWarehouse] = useState(null);
   const [sourceLocation, setSourceLocation] = useState(null);
   const [destLocation, setDestLocation] = useState(null);
@@ -54,6 +55,15 @@ export default function PickingFormScreen({ route, navigation }) {
   const [moves, setMoves] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  const handleOperationTypeChange = opType => {
+    setOperationType(opType);
+    if (opType) {
+      if (opType.warehouse) setWarehouse(opType.warehouse);
+      if (opType.defaultSourceLocation) setSourceLocation(opType.defaultSourceLocation);
+      if (opType.defaultDestLocation) setDestLocation(opType.defaultDestLocation);
+    }
+  };
 
   const handleSave = async () => {
     if (!sourceLocation?.id || !destLocation?.id) {
@@ -70,6 +80,7 @@ export default function PickingFormScreen({ route, navigation }) {
     try {
       const payload = {
         pickingType,
+        operationTypeId: operationType?.id,
         warehouseId: warehouse?.id,
         sourceLocationId: sourceLocation.id,
         destLocationId: destLocation.id,
@@ -110,6 +121,17 @@ export default function PickingFormScreen({ route, navigation }) {
         <ErrorBanner message={error} />
 
         <View style={styles.formCard}>
+          <FormField
+            field={{
+              name: 'operationType',
+              label: 'Operation Type (auto-fills locations)',
+              type: 'relation',
+              relation: 'operation-types',
+              params: { pickingType },
+            }}
+            value={operationType}
+            onChange={handleOperationTypeChange}
+          />
           <FormField
             field={{ name: 'warehouse', label: 'Warehouse (optional)', type: 'relation', relation: 'warehouses' }}
             value={warehouse}

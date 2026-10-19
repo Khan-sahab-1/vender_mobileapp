@@ -13,6 +13,7 @@ import { getEntity } from '../config/entities';
 import { colors, radius, spacing, typography } from '../theme/theme';
 import SearchBar from './SearchBar';
 import { LoadingOverlay, EmptyState } from './Feedback';
+import ProductStockModal from './ProductStockModal';
 
 /**
  * Modal list picker.
@@ -33,6 +34,7 @@ export default function PickerModal({
   const [search, setSearch] = useState('');
   const [items, setItems] = useState(options ?? []);
   const [loading, setLoading] = useState(false);
+  const [stockInspectProduct, setStockInspectProduct] = useState(null);
 
   const entity = relation ? getEntity(relation) : null;
 
@@ -157,6 +159,8 @@ export default function PickerModal({
             }
             renderItem={({ item }) => {
               const isSelected = selectedValue === item.value;
+              const isProduct = relation === 'products' || relation === 'product';
+              const onHand = item.record?.onHandQuantity;
               return (
                 <TouchableOpacity
                   style={[styles.row, isSelected && styles.rowSelected]}
@@ -165,9 +169,24 @@ export default function PickerModal({
                     onSelect(item);
                     onClose();
                   }}>
-                  <Text style={[styles.rowLabel, isSelected && styles.rowLabelSelected]}>
-                    {item.label}
-                  </Text>
+                  <View style={styles.rowContent}>
+                    <Text style={[styles.rowLabel, isSelected && styles.rowLabelSelected]}>
+                      {item.label}
+                    </Text>
+                    {item.record?.sku ? (
+                      <Text style={styles.rowSubLabel}>SKU: {item.record.sku}</Text>
+                    ) : null}
+                  </View>
+
+                  {isProduct && onHand !== undefined ? (
+                    <TouchableOpacity
+                      style={styles.pickerOnHandBadge}
+                      onPress={() => setStockInspectProduct(item.record)}
+                      activeOpacity={0.7}>
+                      <Text style={styles.pickerOnHandText}>{Number(onHand)} on hand</Text>
+                    </TouchableOpacity>
+                  ) : null}
+
                   {isSelected ? (
                     <Text style={styles.checkmark}>✓</Text>
                   ) : (
@@ -178,6 +197,14 @@ export default function PickerModal({
             }}
           />
         )}
+
+        {/* Stock on Hand Location Breakdown Modal */}
+        <ProductStockModal
+          visible={!!stockInspectProduct}
+          productId={stockInspectProduct?.id}
+          product={stockInspectProduct}
+          onClose={() => setStockInspectProduct(null)}
+        />
       </SafeAreaView>
     </Modal>
   );
@@ -246,5 +273,28 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 20,
     fontWeight: '300',
+  },
+  rowSubLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  rowContent: {
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  pickerOnHandBadge: {
+    backgroundColor: '#E7F9F2',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+    marginRight: spacing.sm,
+  },
+  pickerOnHandText: {
+    color: '#057A60',
+    fontWeight: '700',
+    fontSize: 11,
   },
 });

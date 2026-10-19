@@ -24,6 +24,7 @@ const STATE_FILTERS = [
 export default function SalesOrdersListScreen() {
   const navigation = useNavigation();
 
+  // Sales Orders state
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({ totalOrders: 0, quotations: 0, confirmedOrders: 0 });
   const [loading, setLoading] = useState(true);
@@ -53,6 +54,13 @@ export default function SalesOrdersListScreen() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      loadData();
+    });
+    return unsub;
+  }, [navigation, loadData]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -224,7 +232,6 @@ const styles = StyleSheet.create({
     ...typography.h2,
     color: '#FFFFFF',
     fontWeight: '800',
-    fontSize: 18,
   },
   statLabel: {
     ...typography.tiny,
@@ -234,23 +241,25 @@ const styles = StyleSheet.create({
   },
   statDivider: {
     width: 1,
-    height: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    height: 32,
+    backgroundColor: '#334155',
   },
   searchRow: {
+    flexDirection: 'row',
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
+    paddingVertical: spacing.sm,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   searchWrapper: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F1F5F9',
     borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
     paddingHorizontal: spacing.sm + 2,
-    height: 44,
+    height: 40,
   },
   searchIcon: {
     fontSize: 14,
@@ -258,51 +267,52 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    ...typography.body,
     fontSize: 14,
     color: '#0F172A',
+    paddingVertical: 0,
   },
   clearBtn: {
     padding: 4,
   },
   clearBtnText: {
+    fontSize: 12,
     color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '700',
+    fontWeight: 'bold',
   },
   filterRow: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
     paddingVertical: spacing.xs,
   },
   filterScroll: {
     paddingHorizontal: spacing.md,
-    gap: 8,
+    gap: spacing.xs,
   },
   filterChip: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.pill,
-    paddingHorizontal: 14,
+    paddingHorizontal: spacing.md,
     paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: '#F1F5F9',
   },
   filterChipActive: {
     backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
   },
   filterChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
+    ...typography.captionBold,
+    color: '#64748B',
   },
   filterChipTextActive: {
     color: '#FFFFFF',
   },
   listContent: {
     padding: spacing.md,
-    paddingBottom: spacing.xxl,
+    paddingBottom: spacing.xxl * 2,
   },
   orderCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.sm + 2,
     borderWidth: 1,
@@ -321,8 +331,7 @@ const styles = StyleSheet.create({
   soNumber: {
     ...typography.bodyBold,
     color: '#0F172A',
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 15,
   },
   customerName: {
     ...typography.caption,
@@ -330,32 +339,32 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   stateBadge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 3,
+    borderRadius: radius.pill,
   },
   stateBadgeText: {
+    ...typography.captionBold,
     fontSize: 11,
-    fontWeight: '700',
   },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
+    paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    paddingTop: spacing.xs + 2,
+    borderTopColor: '#F8FAFC',
   },
   metaCol: {
     flex: 1,
   },
   dateText: {
-    fontSize: 12,
+    ...typography.tiny,
     color: '#64748B',
   },
   salespersonText: {
-    fontSize: 11,
-    color: '#94A3B8',
+    ...typography.tiny,
+    color: '#64748B',
     marginTop: 2,
   },
   amountCol: {
@@ -404,4 +413,3 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
-

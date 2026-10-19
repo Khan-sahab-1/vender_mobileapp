@@ -238,6 +238,59 @@ export const ENTITIES = {
     ],
   },
 
+  'operation-types': {
+    key: 'operation-types',
+    endpoint: '/operation-types',
+    title: 'Operation Types',
+    singular: 'Operation Type',
+    icon: '⚡',
+    primaryField: 'name',
+    secondaryField: 'sequencePrefix',
+    fields: [
+      { name: 'name', label: 'Name', type: 'text', required: true, placeholder: 'e.g. Main WH: Receipts' },
+      {
+        name: 'pickingType',
+        label: 'Type of Operation',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'receipt', label: 'Receipt (Vendor → Stock)' },
+          { value: 'delivery', label: 'Delivery (Stock → Customer)' },
+          { value: 'internal', label: 'Internal Transfer (Stock → Stock)' },
+          { value: 'return', label: 'Return' },
+        ],
+        default: 'receipt',
+      },
+      {
+        name: 'warehouseId',
+        label: 'Warehouse',
+        type: 'relation',
+        relation: 'warehouses',
+        required: true,
+      },
+      {
+        name: 'defaultSourceLocationId',
+        label: 'Default Source Location',
+        type: 'relation',
+        relation: 'locations',
+        required: true,
+      },
+      {
+        name: 'defaultDestLocationId',
+        label: 'Default Destination Location',
+        type: 'relation',
+        relation: 'locations',
+        required: true,
+      },
+      {
+        name: 'sequencePrefix',
+        label: 'Sequence Prefix',
+        type: 'text',
+        placeholder: 'e.g. IN, OUT, INT',
+      },
+    ],
+  },
+
   taxes: {
     key: 'taxes',
     endpoint: '/taxes',
@@ -813,6 +866,17 @@ export const INVENTORY_MENU = [
   'uom-categories',
   'warehouses',
   'locations',
+  'operation-types',
+];
+
+/** Modules shown on the Purchase hub screen, in display order. */
+export const PURCHASE_MENU = [
+  'vendors',
+];
+
+/** Modules shown on the Sales hub screen, in display order. */
+export const SALES_MENU = [
+  'customers',
 ];
 
 /** Modules shown on the Accounting hub screen, in display order. */
@@ -829,27 +893,9 @@ export const ACCOUNTING_MENU = [
 /** Modules shown on the Settings hub screen, in display order. */
 export const SETTINGS_MENU = [
   {
-    // title: 'Invoicing & Accounting Master Data',
-    // data: [
-    //   'bank-accounts',
-    //   'account-types',
-    //   'account-groups',
-    //   'account-accounts',
-    //   'account-journals',
-    // ],
-  },
-  {
     title: 'Organization & Structure',
     data: ['divisions'],
   },
-  {
-    title: 'Business Partners',
-    data: ['customers', 'vendors'],
-  },
-  // {
-  //   title: 'Financial Settings',
-  //   data: ['taxes', 'payment-terms', 'pricelists'],
-  // },
   {
     title: 'Users & Access',
     data: ['users'],

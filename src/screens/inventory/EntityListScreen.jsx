@@ -8,7 +8,8 @@ import { LoadingOverlay, EmptyState, ErrorBanner } from '../../components/Feedba
 import { createCrudApi } from '../../api/crud';
 import { getErrorMessage } from '../../api/client';
 import { getEntity } from '../../config/entities';
-import { colors, spacing, shadows, typography } from '../../theme/theme';
+import ProductStockModal from '../../components/ProductStockModal';
+import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 
 export default function EntityListScreen({ route, navigation }) {
   const { entityKey } = route.params || {};
@@ -23,6 +24,8 @@ export default function EntityListScreen({ route, navigation }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [stockModalVisible, setStockModalVisible] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   const handleAddNew = useCallback(() => {
     navigation.navigate('EntityForm', { entityKey, id: null });
@@ -149,6 +152,14 @@ export default function EntityListScreen({ route, navigation }) {
         parts.push(structureLabels[item.companyStructure] || item.companyStructure);
       }
     }
+    if (entityKey === 'account-groups') {
+      if (item.codePrefix) parts.push(`Prefix: ${item.codePrefix}`);
+      if (item.parent?.name) {
+        parts.push(`Parent: ${item.parent.name}`);
+      } else {
+        parts.push('Primary Group');
+      }
+    }
     return parts.length > 0 ? parts.join(' • ') : undefined;
   };
 
@@ -212,15 +223,30 @@ export default function EntityListScreen({ route, navigation }) {
               </View>
             ) : null
           }
-          renderItem={({ item }) => (
-            <ListRow
-              icon={entity.icon}
-              title={item[entity.primaryField] ?? item.name ?? item.code ?? item.id ?? '—'}
-              subtitle={renderSubtitle(item)}
-              onPress={() => navigation.navigate('EntityForm', { entityKey, id: item.id })}
-              onLongPress={() => handleDelete(item)}
-            />
-          )}
+          renderItem={({ item }) => {
+            const isProduct = entityKey === 'products' || entityKey === 'product';
+            const onHand = Number(item.onHandQuantity ?? 0);
+            return (
+              <ListRow
+                icon={entity.icon}
+                title={item[entity.primaryField] ?? item.name ?? item.code ?? item.id ?? '—'}
+                subtitle={renderSubtitle(item)}
+                badge={isProduct ? `${onHand} on hand` : undefined}
+                onBadgePress={
+                  isProduct
+                    ? () => {
+                        setSelectedProduct(item);
+                        setStockModalVisible(true);
+                      }
+                    : undefined
+                }
+                badgeStyle={isProduct ? styles.onHandBadge : undefined}
+                badgeTextStyle={isProduct ? styles.onHandBadgeText : undefined}
+                onPress={() => navigation.navigate('EntityForm', { entityKey, id: item.id })}
+                onLongPress={() => handleDelete(item)}
+              />
+            );
+          }}
         />
       )}
 
@@ -233,6 +259,14 @@ export default function EntityListScreen({ route, navigation }) {
         accessibilityLabel={`Add new ${entity.singular}`}>
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
+
+      {/* Stock on Hand Location Breakdown Modal */}
+      <ProductStockModal
+        visible={stockModalVisible}
+        productId={selectedProduct?.id}
+        product={selectedProduct}
+        onClose={() => setStockModalVisible(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -280,5 +314,18 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '300',
     lineHeight: 34,
+  },
+  onHandBadge: {
+    backgroundColor: '#E7F9F2',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+  },
+  onHandBadgeText: {
+    color: '#057A60',
+    fontWeight: '700',
+    fontSize: 11,
   },
 });

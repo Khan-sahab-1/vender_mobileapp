@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState } from 'react';
-import { ScrollView, Alert, View, Text, StyleSheet } from 'react-native';
+import { ScrollView, Alert, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import ScreenContainer from '../../components/ScreenContainer';
 import Button from '../../components/Button';
 import FormField from '../../components/FormField';
@@ -7,6 +7,8 @@ import { LoadingOverlay, ErrorBanner } from '../../components/Feedback';
 import { createCrudApi } from '../../api/crud';
 import client, { getErrorMessage } from '../../api/client';
 import { getEntity } from '../../config/entities';
+import ProductStockModal from '../../components/ProductStockModal';
+import { productsStockApi } from '../../api/stock';
 import { buildInitialValues, buildPayload, validateRequired } from '../../utils/formTransforms';
 import { colors, radius, spacing, typography } from '../../theme/theme';
 
@@ -20,7 +22,9 @@ export default function EntityFormScreen({ route, navigation }) {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-
+  const [stockModalVisible, setStockModalVisible] = useState(false);
+  const [onHandQuantity, setOnHandQuantity] = useState(0);
+// console.log(values,'0000')
   useLayoutEffect(() => {
     if (!entity) return;
     navigation.setOptions({
@@ -30,17 +34,39 @@ export default function EntityFormScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!isEdit || !api || !entity) return;
+    let isMounted = true;
     (async () => {
       try {
         setLoading(true);
         const record = await api.get(id);
-        setValues(buildInitialValues(entity, record));
+        const initial = buildInitialValues(entity, record);
+        const initialOnHand = Number(record.onHandQuantity ?? 0);
+        initial.onHandQuantity = initialOnHand;
+        if (isMounted) {
+          setValues(initial);
+          setOnHandQuantity(initialOnHand);
+        }
+
+        // For products, also fetch accurate location breakdown immediately
+        if (entityKey === 'products' || entityKey === 'product') {
+          try {
+            const stockRes = await productsStockApi.getLocationsStock(id);
+            if (isMounted && stockRes?.totalOnHand !== undefined) {
+              const liveQty = Number(stockRes.totalOnHand);
+              setOnHandQuantity(liveQty);
+              setValues(prev => ({ ...prev, onHandQuantity: liveQty }));
+            }
+          } catch (_) {}
+        }
       } catch (e) {
-        setError(getErrorMessage(e));
+        if (isMounted) setError(getErrorMessage(e));
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     })();
+    return () => {
+      isMounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -207,6 +233,29 @@ export default function EntityFormScreen({ route, navigation }) {
           </View>
         </View>
 
+        {/* Odoo-style On Hand Quantity Smart Button */}
+        {isEdit && (entityKey === 'products' || entityKey === 'product') && (
+          <TouchableOpacity
+            style={styles.stockSmartCard}
+            onPress={() => setStockModalVisible(true)}
+            activeOpacity={0.7}>
+            <View style={styles.stockSmartLeft}>
+              <View style={styles.stockSmartIconWrap}>
+                <Text style={styles.stockSmartIcon}>📊</Text>
+              </View>
+              <View>
+                <Text style={styles.stockSmartLabel}>Quantity On Hand</Text>
+                <Text style={styles.stockSmartVal}>
+                  {onHandQuantity} {values.uomId?.label || 'Units'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.stockSmartRight}>
+              <Text style={styles.stockSmartAction}>View ›</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
         <ErrorBanner message={error} />
 
         <View style={styles.formCard}>
@@ -282,6 +331,16 @@ export default function EntityFormScreen({ route, navigation }) {
           />
         </View>
       </ScrollView>
+
+      {/* Stock on Hand Location Breakdown Modal */}
+      {isEdit && (entityKey === 'products' || entityKey === 'product') && (
+        <ProductStockModal
+          visible={stockModalVisible}
+          productId={id}
+          product={values}
+          onClose={() => setStockModalVisible(false)}
+        />
+      )}
     </ScreenContainer>
   );
 }
@@ -338,5 +397,52 @@ const styles = StyleSheet.create({
   },
   cancelBtn: {
     marginTop: spacing.sm,
+  },
+  stockSmartCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: radius.md,
+    padding: spacing.sm + 4,
+    marginBottom: spacing.md,
+  },
+  stockSmartLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stockSmartIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm + 2,
+  },
+  stockSmartIcon: {
+    fontSize: 18,
+  },
+  stockSmartLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: '#15803D',
+  },
+  stockSmartVal: {
+    ...typography.h3,
+    fontSize: 16,
+    color: '#166534',
+    fontWeight: '800',
+    marginTop: 1,
+  },
+  stockSmartRight: {
+    paddingLeft: spacing.sm,
+  },
+  stockSmartAction: {
+    ...typography.captionBold,
+    color: '#057A60',
   },
 });

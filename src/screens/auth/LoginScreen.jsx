@@ -156,7 +156,7 @@ export default function LoginScreen() {
               <View style={styles.badgeDot} />
               <Text style={styles.badgeText}>MULTI-TENANT ERP CLOUD</Text>
             </View>
-            <Text style={styles.appTitle}>Master Data ERP</Text>
+            <Text style={styles.appTitle}>ERP</Text>
             <Text style={styles.appSubtitle}>
               {activeTab === 'signin'
                 ? 'Sign in to access your company inventory, products & master data.'
