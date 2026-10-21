@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,14 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import HeaderActionButton from '../../components/HeaderActionButton';
+import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { salesApi } from '../../api/sales';
 import { colors, radius, spacing, typography, shadows } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function SalesOrderDetailScreen() {
   const route = useRoute();
@@ -19,21 +23,137 @@ export default function SalesOrderDetailScreen() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const handleSendForApproval = async () => {
+    Alert.alert(
+      'Send for Approval',
+      `Send Sales Order ${order.soNumber || order.name} to management for approval?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send for Approval',
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              await salesApi.sendForApproval(order.id);
+              Alert.alert('Success', 'Order sent for management approval!');
+              const updated = await salesApi.getOrderDetail(order.id);
+              setOrder(updated);
+            } catch (err) {
+              Alert.alert(
+                'Error',
+                err?.response?.data?.message || err?.message || 'Failed to send for approval',
+              );
+            } finally {
+              setActionLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleApprove = async () => {
+    Alert.alert(
+      'Approve Sale Order',
+      `Approve Sales Order ${order.soNumber || order.name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve Order',
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              await salesApi.approveOrder(order.id);
+              Alert.alert('Order Approved!', 'Sales Order has been approved successfully.');
+              const updated = await salesApi.getOrderDetail(order.id);
+              setOrder(updated);
+            } catch (err) {
+              Alert.alert(
+                'Approval Error',
+                err?.response?.data?.message || err?.message || 'Failed to approve order',
+              );
+            } finally {
+              setActionLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleCancel = async () => {
+    Alert.alert(
+      'Cancel Order',
+      `Are you sure you want to cancel ${order.soNumber || order.name}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Cancel Order',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              await salesApi.cancelOrder(order.id);
+              Alert.alert('Cancelled', 'Order cancelled successfully.');
+              const updated = await salesApi.getOrderDetail(order.id);
+              setOrder(updated);
+            } catch (err) {
+              Alert.alert('Error', err?.response?.data?.message || 'Failed to cancel order');
+            } finally {
+              setActionLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const isEditable = order && order.state !== 'done' && order.state !== 'cancel';
+
+  const handleGoToEdit = () => {
+    if (!order) return;
+    navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
+      orderId: order.id,
+      order,
+    });
+  };
+
+  useLayoutEffect(() => {
+    const title = order?.soNumber || order?.name || (id ? `SO #${id.slice(0, 8)}` : 'Sales Order');
+    navigation.setOptions({
+      title,
+      headerRight: () =>
+        isEditable ? (
+          <HeaderActionButton title="✏️ Edit" onPress={handleGoToEdit} />
+        ) : null,
+    });
+  }, [navigation, order, isEditable, id]);
+
+  const fetchOrderDetail = async (showLoadingSpinner = false) => {
+    if (!id) return;
+    try {
+      if (showLoadingSpinner) setLoading(true);
+      const data = await salesApi.getOrderDetail(id);
+      setOrder(data);
+    } catch (err) {
+      setError(err.message || 'Could not load Sales Order.');
+    } finally {
+      if (showLoadingSpinner) setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (!id) return;
-    (async () => {
-      try {
-        setLoading(true);
-        const data = await salesApi.getOrderDetail(id);
-        setOrder(data);
-      } catch (err) {
-        setError(err.message || 'Could not load Sales Order.');
-      } finally {
-        setLoading(false);
-      }
-    })();
+    fetchOrderDetail(true);
   }, [id]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      fetchOrderDetail(false);
+    });
+    return unsub;
+  }, [navigation, id]);
 
   if (loading) {
     return (
@@ -62,6 +182,27 @@ export default function SalesOrderDetailScreen() {
       maximumFractionDigits: 2,
     });
 
+  const getStateBadge = state => {
+    switch (state) {
+      case 'draft':
+        return { label: 'Quotation (Draft)', bg: '#FEF3C7', text: '#B45309' };
+      case 'sent_for_approval':
+      case 'to_approve':
+        return { label: 'Pending Approval', bg: '#EDE9FE', text: '#7C3AED' };
+      case 'approved':
+      case 'sale':
+        return { label: 'Approved', bg: '#DCFCE7', text: '#15803D' };
+      case 'done':
+        return { label: 'Locked / Done', bg: '#F1F5F9', text: '#475569' };
+      case 'cancel':
+        return { label: 'Cancelled', bg: '#FEE2E2', text: '#B91C1C' };
+      default:
+        return { label: state || 'Draft', bg: '#F1F5F9', text: '#475569' };
+    }
+  };
+
+  const badge = order ? getStateBadge(order.state) : {};
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Order Status Card */}
@@ -69,10 +210,22 @@ export default function SalesOrderDetailScreen() {
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.soNumber}>{order.soNumber}</Text>
-            <Text style={styles.dateText}>Date: {order.date ? order.date.slice(0, 19) : '—'}</Text>
+            <Text style={styles.dateText}>Date: {order.date ? formatDate(order.date) : '—'}</Text>
           </View>
-          <View style={[styles.statePill, order.state === 'sale' ? styles.pillSale : styles.pillDraft]}>
-            <Text style={styles.statePillText}>{order.state?.toUpperCase()}</Text>
+          <View style={styles.headerRightCol}>
+            <View style={[styles.statePill, { backgroundColor: badge.bg }]}>
+              <Text style={[styles.statePillText, { color: badge.text }]}>
+                {badge.label?.toUpperCase()}
+              </Text>
+            </View>
+            {isEditable && (
+              <TouchableOpacity
+                style={styles.quickEditBtn}
+                onPress={handleGoToEdit}
+                activeOpacity={0.7}>
+                <Text style={styles.quickEditBtnText}>✏️ Edit</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -81,11 +234,30 @@ export default function SalesOrderDetailScreen() {
         {/* Customer & Addresses */}
         <Text style={styles.sectionLabel}>CUSTOMER & DELIVERY</Text>
         <Text style={styles.customerName}>{order.customer}</Text>
-        {order.invoiceAddress ? (
-          <Text style={styles.metaRow}>🏢 Invoice: {order.invoiceAddress}</Text>
+        {order.poRefNo ? (
+          <Text style={styles.metaRow}>🔖 Client PO #: {order.poRefNo}</Text>
         ) : null}
-        {order.shippingAddress ? (
-          <Text style={styles.metaRow}>📍 Delivery: {order.shippingAddress}</Text>
+        {order.clientPoDate ? (
+          <Text style={styles.metaRow}>📅 Client PO Date: {formatDate(order.clientPoDate)}</Text>
+        ) : null}
+        {order.deliveryAddress || order.shippingAddress ? (
+          <Text style={styles.metaRow}>📍 Delivery: {order.deliveryAddress || order.shippingAddress}</Text>
+        ) : null}
+        {order.deliveryDate ? (
+          <Text style={styles.metaRow}>
+            🗓️ Delivery Date: {formatDate(order.deliveryDate)} ({order.deliveryDays || 0} days)
+          </Text>
+        ) : null}
+        {order.warehouse?.name ? (
+          <Text style={styles.metaRow}>🏢 Warehouse: {order.warehouse.name}</Text>
+        ) : null}
+        {order.division?.name ? (
+          <Text style={styles.metaRow}>🏭 Division: {order.division.name}</Text>
+        ) : null}
+        {order.transporterName || order.transporter?.name ? (
+          <Text style={styles.metaRow}>
+            🚚 Transporter: {order.transporterName || order.transporter?.name}
+          </Text>
         ) : null}
         {order.salesperson ? (
           <Text style={styles.metaRow}>👤 Salesperson: {order.salesperson}</Text>
@@ -145,6 +317,59 @@ export default function SalesOrderDetailScreen() {
             <Text style={styles.invoiceStatusVal}>{order.invoiceStatus}</Text>
           </View>
         ) : null}
+
+        {/* Workflow Actions */}
+      
+
+        {order.state === 'draft' && (
+          <TouchableOpacity
+            style={styles.btnSendApproval}
+            onPress={handleSendForApproval}
+            disabled={actionLoading}
+            activeOpacity={0.8}>
+            <Text style={styles.btnSendApprovalText}>
+              {actionLoading ? 'Sending...' : '📤 Send for Approval →'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {(order.state === 'sent_for_approval' || order.state === 'to_approve') && (
+          <View style={styles.actionRowGroup}>
+            <TouchableOpacity
+              style={styles.btnApproveOrder}
+              onPress={handleApprove}
+              disabled={actionLoading}
+              activeOpacity={0.8}>
+              <Text style={styles.btnApproveOrderText}>
+                {actionLoading ? 'Approving...' : '✓ Approve Sale Order'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.btnCancelOrder}
+              onPress={handleCancel}
+              disabled={actionLoading}
+              activeOpacity={0.8}>
+              <Text style={styles.btnCancelOrderText}>✕ Reject / Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {(order.state === 'approved' || order.state === 'sale') && (
+          <View style={styles.approvedStatusTag}>
+            <Text style={styles.approvedStatusTagText}>
+              ✓ Sale Order Approved & Confirmed
+            </Text>
+          </View>
+        )}
+
+        {order.state === 'cancel' && (
+          <View style={styles.cancelledStatusTag}>
+            <Text style={styles.cancelledStatusTagText}>
+              ✕ Sale Order Cancelled
+            </Text>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -331,6 +556,129 @@ const styles = StyleSheet.create({
   backBtnText: {
     color: colors.text,
     fontWeight: '700',
+  },
+  headerRightCol: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  quickEditBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  quickEditBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  btnEditOrder: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#3B82F6',
+    borderRadius: radius.md,
+    paddingVertical: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  btnEditOrderText: {
+    color: '#1D4ED8',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  btnConfirmOrder: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+  },
+  btnConfirmOrderText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  btnSendApproval: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+  },
+  btnSendApprovalText: {
+    color: '#B45309',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  actionRowGroup: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  btnApproveOrder: {
+    flex: 1.5,
+    backgroundColor: '#16A34A',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnApproveOrderText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  btnCancelOrder: {
+    flex: 1,
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnCancelOrderText: {
+    color: '#DC2626',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  approvedStatusTag: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+  },
+  approvedStatusTagText: {
+    color: '#15803D',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  cancelledStatusTag: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+  },
+  cancelledStatusTagText: {
+    color: '#B91C1C',
+    fontWeight: '800',
+    fontSize: 13,
   },
 });
 

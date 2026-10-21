@@ -16,6 +16,7 @@ import { purchaseOrdersApi } from '../../api/purchase';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import DateTimePickerModal from "react-native-modal-datetime-picker";
+import { formatDate } from '../../utils/dateUtils';
 
 function getTodayString() {
   const d = new Date();
@@ -498,7 +499,7 @@ export default function PurchaseOrderform({ navigation, route }) {
       const picking = res?.stockPicking;
       Alert.alert(
         'PO Approved!',
-        `PO ${res.name} approved!\n\n🧾 Vendor Bill: ${bill?.billNumber || 'Created'}\n📦 Stock Receipt: ${picking?.name || 'Created'}\n\nInventory moves & Accounting entries are ready!`,
+        `PO ${res.name} approved!\n\n🧾 Vendor Bill: ${bill?.billNumber || 'Draft Bill'}\n📦 Stock Receipt: ${picking?.name || 'Created'}\n\nInventory moves & Accounting entries are ready!`,
         [
           { text: 'Stay Here', style: 'cancel' },
           {
@@ -644,7 +645,7 @@ export default function PurchaseOrderform({ navigation, route }) {
                   })
                 }>
                 <Text style={styles.linkedBillBtnText}>
-                  🧾 View Generated Vendor Bill: {currentOrder.vendorBill.billNumber} ›
+                  🧾 View Generated Vendor Bill: {currentOrder.vendorBill.billNumber || 'Draft Bill'} ›
                 </Text>
               </TouchableOpacity>
             )}
@@ -809,7 +810,7 @@ export default function PurchaseOrderform({ navigation, route }) {
               accessibilityLabel="Select Order Date">
               <Text style={styles.inputLabel}>Order Date</Text>
               <View style={styles.pickerTrigger}>
-                <Text style={styles.pickerTriggerText}>{orderDate || 'Select Date'}</Text>
+                <Text style={styles.pickerTriggerText}>{formatDate(orderDate) || 'Select Date'}</Text>
                 <Text style={{ fontSize: 14 }}>📅</Text>
               </View>
             </TouchableOpacity>
@@ -822,7 +823,7 @@ export default function PurchaseOrderform({ navigation, route }) {
               accessibilityLabel="Select Delivery Date">
               <Text style={styles.inputLabel}>Delivery Date</Text>
               <View style={styles.pickerTrigger}>
-                <Text style={styles.pickerTriggerText}>{deliveryDate || 'Select Date'}</Text>
+                <Text style={styles.pickerTriggerText}>{formatDate(deliveryDate) || 'Select Date'}</Text>
                 <Text style={{ fontSize: 14 }}>📅</Text>
               </View>
             </TouchableOpacity>

@@ -12,6 +12,7 @@ import {
 import ScreenContainer from '../../components/ScreenContainer';
 import { vendorPortalApi } from '../../api/vendorPortal';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function VendorBillsScreen({ navigation }) {
   const [bills, setBills] = useState([]);
@@ -184,7 +185,7 @@ export default function VendorBillsScreen({ navigation }) {
                   <View style={styles.metaRow}>
                     <Text style={styles.metaLabel}>Invoice Date:</Text>
                     <Text style={styles.metaVal}>
-                      {String(item.date || '').slice(0, 10)}
+                      {formatDate(item.date)}
                     </Text>
                   </View>
 
@@ -192,7 +193,7 @@ export default function VendorBillsScreen({ navigation }) {
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Due Date:</Text>
                       <Text style={styles.metaVal}>
-                        {String(item.dueDate || '').slice(0, 10)}
+                        {formatDate(item.dueDate)}
                       </Text>
                     </View>
                   )}

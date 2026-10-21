@@ -7,6 +7,7 @@ import ChipsField from './ChipsField';
 import ArrayField from './ArrayField';
 import { createCrudApi } from '../api/crud';
 import { getEntity } from '../config/entities';
+import { formatDate } from '../utils/dateUtils';
 
 function FocusedTextInput({ multiline, style, ...props }) {
   const [focused, setFocused] = useState(false);
@@ -86,7 +87,7 @@ export default function FormField({ field, value, onChange }) {
             onPress={() => setDatePickerOpen(true)}
             activeOpacity={0.7}>
             <Text style={value ? styles.selectValue : styles.selectPlaceholder}>
-              {value || field.placeholder || 'Select date...'}
+              {value ? formatDate(value) : field.placeholder || 'Select date...'}
             </Text>
             <Text style={{ fontSize: 16 }}>📅</Text>
           </TouchableOpacity>
@@ -248,22 +249,41 @@ function RelationField({ field, value, onChange }) {
 
   return (
     <Labeled field={field}>
-      <TouchableOpacity
-        style={styles.selectInput}
-        onPress={() => setPickerOpen(true)}
-        activeOpacity={0.7}>
-        <Text style={displayLabel ? styles.selectValue : styles.selectPlaceholder}>
-          {displayLabel ?? `Select ${field.label.toLowerCase()}...`}
-        </Text>
-        <Text style={styles.chevron}>›</Text>
-      </TouchableOpacity>
+      <View style={styles.relationRow}>
+        <TouchableOpacity
+          style={[styles.selectInput, styles.relationInput]}
+          onPress={() => setPickerOpen(true)}
+          activeOpacity={0.7}>
+          <Text style={displayLabel ? styles.selectValue : styles.selectPlaceholder}>
+            {displayLabel ?? `Select ${field.label.toLowerCase()}...`}
+          </Text>
+          <Text style={styles.chevron}>›</Text>
+        </TouchableOpacity>
+        {!field.required && value?.id ? (
+          <TouchableOpacity
+            style={styles.clearBtn}
+            onPress={() => {
+              setResolvedLabel(null);
+              onChange(null);
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.clearBtnText}>✕</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
       <PickerModal
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onSelect={item => {
-          setResolvedLabel(item.label);
-          onChange({ id: item.value, label: item.label });
+          if (!item || !item.value) {
+            setResolvedLabel(null);
+            onChange(null);
+          } else {
+            setResolvedLabel(item.label);
+            onChange({ id: item.value, label: item.label });
+          }
         }}
+        selectedValue={value?.id}
         title={field.label}
         relation={field.relation}
         params={field.params}
@@ -363,5 +383,29 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 20,
     fontWeight: '300',
+  },
+  relationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  relationInput: {
+    flex: 1,
+  },
+  clearBtn: {
+    marginLeft: spacing.sm,
+    padding: spacing.xs,
+    backgroundColor: colors.surfaceHover || '#F1F5F9',
+    borderRadius: 999,
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  clearBtnText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

@@ -18,6 +18,7 @@ import { inventoryAdjustmentsApi } from '../../api/stock';
 import { getErrorMessage } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
   const { id } = route.params;
@@ -420,7 +421,7 @@ export default function InventoryAdjustmentDetailScreen({ route, navigation }) {
                 {adjustment.reference || adjustment.name || 'Adjustment'}
               </Text>
               <Text style={styles.dateText}>
-                Date: {adjustment.inventoryDate || 'Today'}
+                Date: {adjustment.inventoryDate ? formatDate(adjustment.inventoryDate) : 'Today'}
               </Text>
             </View>
             <StateBadge state={adjustment.state} />

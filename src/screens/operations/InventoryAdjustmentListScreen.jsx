@@ -15,6 +15,7 @@ import { inventoryAdjustmentsApi } from '../../api/stock';
 import { getErrorMessage } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -194,7 +195,7 @@ export default function InventoryAdjustmentListScreen({ navigation }) {
                       {item.reference || item.name || 'INV Adjustment'}
                     </Text>
                     <Text style={styles.cardDate}>
-                      {item.inventoryDate || 'Today'}
+                      {item.inventoryDate ? formatDate(item.inventoryDate) : 'Today'}
                     </Text>
                   </View>
                   <StateBadge state={item.state} />

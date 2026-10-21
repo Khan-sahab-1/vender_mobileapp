@@ -11,6 +11,7 @@ export const navigationScreen = {
   CHART_OF_ACCOUNTS: 'ChartOfAccounts',
   SALES_MENU: 'SalesMenu',
   SALES_ORDERS_LIST: 'SalesOrdersList',
+  SALES_ORDER_FORM: 'SalesOrderForm',
   SALES_ORDER_DETAIL: 'SalesOrderDetail',
   VOUCHER: 'VoucherScreen',
 };

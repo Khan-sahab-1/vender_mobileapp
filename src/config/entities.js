@@ -532,6 +532,7 @@ export const ENTITIES = {
         label: 'Parent Group',
         type: 'relation',
         relation: 'account-groups',
+        placeholder: 'Select parent group (optional)',
       },
     ],
   },

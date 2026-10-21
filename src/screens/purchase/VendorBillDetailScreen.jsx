@@ -17,6 +17,7 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { vendorBillsApi, accountingApi } from '../../api/purchase';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 function parseSafeDate(d) {
   if (!d) return new Date();
@@ -352,7 +353,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
     if (!bill?.id) return;
     Alert.alert(
       'Validate Vendor Bill',
-      `Validate ${bill.billNumber}? This will post a balanced Double-Entry Journal Entry (Dr Expense, Cr Accounts Payable) to the General Ledger.`,
+      `Validate ${bill.billNumber || 'Draft Bill'}? This will assign the official Bill Number and post a balanced Double-Entry Journal Entry (Dr Expense, Cr Accounts Payable) to the General Ledger.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -392,7 +393,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
               populateFormFromBill(res);
               Alert.alert(
                 'Bill Validated!',
-                `Bill ${bill.billNumber} has been validated!\n\nJournal Entry posted to General Ledger.\nVendor Payable balance has been updated.`
+                `Bill ${res.billNumber || bill.billNumber || ''} has been validated!\n\nJournal Entry posted to General Ledger.\nVendor Payable balance has been updated.`
               );
               fetchBill();
             } catch (err) {
@@ -497,7 +498,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
       <View style={[styles.headerCard, shadows.sm]}>
         <View style={styles.headerTopRow}>
           <View style={{ flex: 1, paddingRight: spacing.sm }}>
-            <Text style={styles.billNumber}>{bill.billNumber}</Text>
+            <Text style={styles.billNumber}>{bill.billNumber || 'Draft Bill'}</Text>
             <TouchableOpacity
               style={styles.vendorPickerTrigger}
               disabled={isReadOnly}
@@ -644,7 +645,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 disabled={isReadOnly}
                 onPress={() => showDatePicker('receiptDate')}>
                 <Text style={styles.editDateFieldText}>
-                  📅 {editForm.receiptDate || 'Select Date'}
+                  📅 {formatDate(editForm.receiptDate) || 'Select Date'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -657,7 +658,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 disabled={isReadOnly}
                 onPress={() => showDatePicker('billDate')}>
                 <Text style={styles.editDateFieldText}>
-                  📅 {editForm.billDate || 'Select Date'}
+                  📅 {formatDate(editForm.billDate) || 'Select Date'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -693,7 +694,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 disabled={isReadOnly}
                 onPress={() => showDatePicker('dueDate')}>
                 <Text style={styles.editDateFieldText}>
-                  📅 {editForm.dueDate || 'Select Date'}
+                  📅 {formatDate(editForm.dueDate) || 'Select Date'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1019,7 +1020,7 @@ export default function VendorBillDetailScreen({ route, navigation }) {
                 <View style={styles.procureRow}>
                   <Text style={styles.procureLabel}>Receipt Date</Text>
                   <Text style={styles.procureVal}>
-                    {String(bill.receiptDate || editForm.receiptDate).slice(0, 10)}
+                    {formatDate(bill.receiptDate || editForm.receiptDate)}
                   </Text>
                 </View>
               )}
@@ -1054,14 +1055,14 @@ export default function VendorBillDetailScreen({ route, navigation }) {
               {Boolean(bill.invoiceDate) && (
                 <View style={styles.procureRow}>
                   <Text style={styles.procureLabel}>Bill Date</Text>
-                  <Text style={styles.procureVal}>{String(bill.invoiceDate).slice(0, 10)}</Text>
+                  <Text style={styles.procureVal}>{formatDate(bill.invoiceDate)}</Text>
                 </View>
               )}
 
               {Boolean(bill.dueDate) && (
                 <View style={styles.procureRow}>
                   <Text style={styles.procureLabel}>Due Date</Text>
-                  <Text style={styles.procureVal}>{String(bill.dueDate).slice(0, 10)}</Text>
+                  <Text style={styles.procureVal}>{formatDate(bill.dueDate)}</Text>
                 </View>
               )}
 

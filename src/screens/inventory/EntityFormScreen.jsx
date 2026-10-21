@@ -139,8 +139,9 @@ export default function EntityFormScreen({ route, navigation }) {
     }
   }, [isEdit, entityKey]);
 
-  const isIndividual = values?.companyType === 'individual';
-  const isCompany = !isIndividual;
+  const isPartner = ['partners', 'partner', 'customers', 'customer', 'vendors', 'vendor'].includes(entityKey);
+  const isIndividual = isPartner && values?.companyType === 'individual';
+  const isCompany = isPartner && !isIndividual;
 
   const visibleFields = entity?.fields
     ? entity.fields.filter(f => {
@@ -153,9 +154,11 @@ export default function EntityFormScreen({ route, navigation }) {
           if (['accountReceivableId', 'customerLocationId', 'isCustomer'].includes(f.name)) return false;
         }
 
-        // Conditional display based on Company vs Individual
-        if (f.name === 'companyStructure' && !isCompany) return false;
-        if (f.name === 'parentId' && !isIndividual) return false;
+        // Conditional display based on Company vs Individual (only for partners)
+        if (isPartner) {
+          if (f.name === 'companyStructure' && !isCompany) return false;
+          if (f.name === 'parentId' && !isIndividual) return false;
+        }
 
         return true;
       })
@@ -171,7 +174,7 @@ export default function EntityFormScreen({ route, navigation }) {
     setSaving(true);
     setError(null);
     try {
-      const payload = buildPayload(entity, values);
+      const payload = buildPayload(entity, { ...values, __isEdit: isEdit });
       if (values.companyType === 'company') {
         delete payload.parentId;
         if (!payload.companyStructure) {
@@ -184,6 +187,13 @@ export default function EntityFormScreen({ route, navigation }) {
         }
       }
       delete payload.creditLimit;
+
+      if ((entityKey === 'account-groups' || entityKey === 'account-group') && isEdit) {
+        if (!values.parentId || !values.parentId.id) {
+          payload.parentId = null;
+        }
+      }
+
       if (isEdit) {
         await api.update(id, payload);
       } else {
@@ -261,7 +271,7 @@ export default function EntityFormScreen({ route, navigation }) {
         <View style={styles.formCard}>
           {visibleFields.map(field => {
             let fieldProps = field;
-            if (field.name === 'parentId') {
+            if (field.name === 'parentId' && isPartner) {
               const rel =
                 entityKey === 'vendors' || entityKey === 'vendor'
                   ? 'vendors'

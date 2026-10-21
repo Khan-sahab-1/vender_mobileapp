@@ -12,6 +12,7 @@ import {
 import ScreenContainer from '../../components/ScreenContainer';
 import { vendorPortalApi } from '../../api/vendorPortal';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function VendorOrdersScreen({ navigation }) {
   const [orders, setOrders] = useState([]);
@@ -168,7 +169,7 @@ export default function VendorOrdersScreen({ navigation }) {
                   <View style={styles.metaRow}>
                     <Text style={styles.metaLabel}>Order Date:</Text>
                     <Text style={styles.metaVal}>
-                      {String(item.dateOrder || '').slice(0, 10)}
+                      {formatDate(item.dateOrder)}
                     </Text>
                   </View>
 
@@ -176,7 +177,7 @@ export default function VendorOrdersScreen({ navigation }) {
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Expected Delivery:</Text>
                       <Text style={styles.metaVal}>
-                        {String(item.datePlanned || '').slice(0, 10)}
+                        {formatDate(item.datePlanned)}
                       </Text>
                     </View>
                   )}

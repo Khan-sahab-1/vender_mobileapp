@@ -16,6 +16,7 @@ import { LoadingOverlay, EmptyState } from '../../components/Feedback';
 import { purchaseOrdersApi } from '../../api/purchase';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 const ORDER_TYPE_LABELS = {
   adhoc: { label: 'Adhoc', bg: colors.primaryLight, fg: colors.primary },
@@ -36,6 +37,7 @@ export default function PurchaseOrder({ navigation }) {
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'grid' (default list)
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState(null);
@@ -148,7 +150,7 @@ export default function PurchaseOrder({ navigation }) {
             setActionLoadingId(orderId);
             try {
               const res = await purchaseOrdersApi.approve(orderId);
-              const billNo = res?.vendorBill?.billNumber;
+              const billNo = res?.vendorBill?.billNumber || 'Draft Bill';
               const pickingNo = res?.stockPicking?.name;
               Alert.alert(
                 'PO Approved!',
@@ -253,6 +255,55 @@ export default function PurchaseOrder({ navigation }) {
       })
     : [];
 
+  const renderListItem = ({ item }) => {
+    const typeMeta = ORDER_TYPE_LABELS[item.type] || ORDER_TYPE_LABELS.adhoc;
+    const vendorName = item.vendor?.name || 'General Vendor';
+    const locationName = item.warehouse?.name || item.division?.name || 'Main Warehouse';
+    const formattedTotal = Number(item.amountTotal || item.totalAmount || 0).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const poNumber = item.name && !item.name.startsWith('RFQ') ? item.name : (item.name || 'Draft PO');
+    const orderDate = item.orderDate ? formatDate(item.orderDate) : 'Today';
+
+    return (
+      <TouchableOpacity
+        style={[styles.listCard, shadows.xs]}
+        activeOpacity={0.7}
+        onPress={() =>
+          navigation.navigate(navigationScreen.PURCHASE_ORDER_FORM, { order: item, orderId: item.id })
+        }>
+        <View style={styles.listCardHeader}>
+          <View style={styles.listNumberGroup}>
+            <Text style={styles.listPoNumber}>{poNumber}</Text>
+            <View style={[styles.typePill, { backgroundColor: typeMeta.bg }]}>
+              <Text style={[styles.typePillText, { color: typeMeta.fg }]}>{typeMeta.label}</Text>
+            </View>
+          </View>
+          <StateBadge state={item.state} />
+        </View>
+
+        <View style={styles.listCardMiddle}>
+          <View style={styles.listVendorCol}>
+            <Text style={styles.listVendorText} numberOfLines={1}>
+              🏢 {vendorName}
+            </Text>
+            <Text style={styles.listMetaText} numberOfLines={1}>
+              📍 {locationName} • 📅 {orderDate}
+            </Text>
+          </View>
+
+          <View style={styles.listAmountCol}>
+            <Text style={styles.listAmountLabel}>Grand Total</Text>
+            <Text style={styles.listAmountValue}>
+              {item.currency || 'INR'} {formattedTotal}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   const renderOrderItem = ({ item }) => {
     const typeMeta = ORDER_TYPE_LABELS[item.type] || ORDER_TYPE_LABELS.adhoc;
     const vendorName = item.vendor?.name || 'General Vendor';
@@ -307,11 +358,11 @@ export default function PurchaseOrder({ navigation }) {
         <View style={styles.cardFooter}>
           <View style={styles.dateBox}>
             <Text style={styles.dateLabel}>
-              Order: {item.orderDate ? String(item.orderDate).slice(0, 10) : 'Today'}
+              Order: {item.orderDate ? formatDate(item.orderDate) : 'Today'}
             </Text>
             {item.deliveryDate ? (
               <Text style={styles.dateSubLabel}>
-              Delivery: {String(item.deliveryDate).slice(0, 10)}
+              Delivery: {formatDate(item.deliveryDate)}
               </Text>
             ) : null}
           </View>
@@ -374,7 +425,7 @@ export default function PurchaseOrder({ navigation }) {
                     })
                   }>
                   <Text style={styles.btnBillText}>
-                    🧾 View Bill: {item.vendorBill.billNumber} ›
+                    🧾 View Bill: {item.vendorBill.billNumber || 'Draft Bill'} ›
                   </Text>
                 </TouchableOpacity>
               )}
@@ -448,14 +499,47 @@ export default function PurchaseOrder({ navigation }) {
         />
       </View>
 
+      {/* View Toggle Bar (List vs Grid) */}
+      <View style={styles.viewToggleBar}>
+        <Text style={styles.viewOrderCount}>
+          {filteredOrders.length} {filteredOrders.length === 1 ? 'Order' : 'Orders'}
+        </Text>
+        <View style={styles.toggleButtonGroup}>
+          <TouchableOpacity
+            style={[styles.viewToggleBtn, viewMode === 'list' && styles.viewToggleBtnActive]}
+            activeOpacity={0.7}
+            onPress={() => setViewMode('list')}>
+            <Text
+              style={[
+                styles.viewToggleBtnText,
+                viewMode === 'list' && styles.viewToggleBtnTextActive,
+              ]}>
+              ☰ List
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.viewToggleBtn, viewMode === 'grid' && styles.viewToggleBtnActive]}
+            activeOpacity={0.7}
+            onPress={() => setViewMode('grid')}>
+            <Text
+              style={[
+                styles.viewToggleBtnText,
+                viewMode === 'grid' && styles.viewToggleBtnTextActive,
+              ]}>
+              ⊞ Grid
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {loading && !refreshing ? (
         <LoadingOverlay />
       ) : (
         <FlatList
           data={filteredOrders}
           keyExtractor={item => item.id || item.name}
-          renderItem={renderOrderItem}
-          contentContainerStyle={styles.listContent}
+          renderItem={viewMode === 'list' ? renderListItem : renderOrderItem}
+          contentContainerStyle={viewMode === 'list' ? styles.listModeContent : styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -515,6 +599,112 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: colors.textInverted,
+  },
+  viewToggleBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  viewOrderCount: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  toggleButtonGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: radius.pill,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  viewToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+  },
+  viewToggleBtnActive: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  viewToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  viewToggleBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  listModeContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xxl,
+    gap: spacing.sm,
+  },
+  listCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  listCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  listNumberGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  listPoNumber: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  listCardMiddle: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  listVendorCol: {
+    flex: 1,
+    marginRight: 10,
+  },
+  listVendorText: {
+    ...typography.bodyBold,
+    fontSize: 13,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  listMetaText: {
+    ...typography.caption,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  listAmountCol: {
+    alignItems: 'flex-end',
+  },
+  listAmountLabel: {
+    fontSize: 9,
+    textTransform: 'uppercase',
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  listAmountValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.text,
   },
   listContent: {
     padding: spacing.md,

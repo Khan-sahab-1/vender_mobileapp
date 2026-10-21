@@ -12,6 +12,7 @@ import ScreenContainer from '../../components/ScreenContainer';
 import { vendorPortalApi } from '../../api/vendorPortal';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
 import { useAuth } from '../../context/AuthContext';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function VendorDashboardScreen({ navigation }) {
   const { user, logout } = useAuth();
@@ -208,7 +209,7 @@ export default function VendorDashboardScreen({ navigation }) {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.orderPoNumber}>{order.poNumber}</Text>
                     <Text style={styles.orderDate}>
-                      Date: {String(order.date || '').slice(0, 10)}
+                      Date: {formatDate(order.date)}
                     </Text>
                   </View>
                   <View

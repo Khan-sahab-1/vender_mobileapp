@@ -124,6 +124,17 @@ export default function PickerModal({
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         {/* Header */}
         <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => {
+              onSelect({ value: null, label: null, record: null });
+              onClose();
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.clearHeaderBtnWrap}
+            accessibilityRole="button"
+            accessibilityLabel="Clear selection">
+            <Text style={styles.clearHeaderBtn}>Clear</Text>
+          </TouchableOpacity>
           <Text style={styles.headerTitle}>{title}</Text>
           <TouchableOpacity
             onPress={onClose}
@@ -226,6 +237,15 @@ const styles = StyleSheet.create({
   headerTitle: {
     ...typography.h2,
     color: colors.text,
+  },
+  clearHeaderBtnWrap: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  clearHeaderBtn: {
+    color: colors.textMuted,
+    ...typography.captionBold,
+    fontSize: 13,
   },
   closeBtnWrap: {
     backgroundColor: colors.primaryLight,

@@ -30,6 +30,7 @@ import ChartOfAccountsScreen from '../screens/accounting/ChartOfAccountsScreen';
 import SalesMenuScreen from '../screens/sales/SalesMenuScreen';
 import SalesOrdersListScreen from '../screens/sales/SalesOrdersListScreen';
 import SalesOrderDetailScreen from '../screens/sales/SalesOrderDetailScreen';
+import SalesOrderFormScreen from '../screens/sales/SalesOrderFormScreen';
 import UsersListScreen from '../screens/settings/UsersListScreen';
 import UserFormScreen from '../screens/settings/UserFormScreen';
 
@@ -99,6 +100,11 @@ export default function MainStackNavigator() {
         name="SalesOrdersList"
         component={SalesOrdersListScreen}
         options={{ title: 'Sales Orders (SO)' }}
+      />
+      <Stack.Screen
+        name="SalesOrderForm"
+        component={SalesOrderFormScreen}
+        options={{ title: 'New Sales Order' }}
       />
       <Stack.Screen
         name="SalesOrderDetail"

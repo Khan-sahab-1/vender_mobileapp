@@ -15,6 +15,7 @@ import StateBadge from '../../components/StateBadge';
 import { vendorBillsApi } from '../../api/purchase';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 const TABS = [
   { key: 'all', label: 'All Bills' },
@@ -95,7 +96,7 @@ export default function Venderbills() {
       // Filter by search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const num = (bill.billNumber || '').toLowerCase();
+        const num = (bill.billNumber || (bill.state === 'draft' ? 'draft' : '')).toLowerCase();
         const invNum = (bill.invoiceNumber || '').toLowerCase();
         const vName = (bill.vendorName || bill.vendor?.name || '').toLowerCase();
         const deliverTo = (bill.deliverTo || '').toLowerCase();
@@ -120,9 +121,9 @@ export default function Venderbills() {
     const total = Number(item.amountTotal || 0);
     const residual = Number(item.residualAmount ?? item.amountTotal ?? 0);
     const dateStr = item.invoiceDate
-      ? String(item.invoiceDate).slice(0, 10)
+      ? formatDate(item.invoiceDate)
       : item.createdAt
-      ? String(item.createdAt).slice(0, 10)
+      ? formatDate(item.createdAt)
       : '';
 
     return (
@@ -138,13 +139,13 @@ export default function Venderbills() {
         {/* Top row: Bill number, Date & State */}
         <View style={styles.cardHeader}>
           <View style={{ flex: 1, marginRight: spacing.xs }}>
-            <Text style={styles.billNumber}>{item.billNumber || 'BILL-DRAFT'}</Text>
+            <Text style={styles.billNumber}>{item.billNumber || 'Draft Bill'}</Text>
             {item.invoiceNumber ? (
               <Text style={styles.invNumber}>Inv #: {item.invoiceNumber}</Text>
             ) : null}
             <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }}>
               {item.receiptDate ? (
-                <Text style={styles.billDate}>Receipt: {String(item.receiptDate).slice(0, 10)}</Text>
+                <Text style={styles.billDate}>Receipt: {formatDate(item.receiptDate)}</Text>
               ) : null}
               {dateStr ? (
                 <Text style={styles.billDate}>{item.receiptDate ? ' · ' : ''}Bill: {dateStr}</Text>

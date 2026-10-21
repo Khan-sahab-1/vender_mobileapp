@@ -11,6 +11,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import ScreenContainer from '../../components/ScreenContainer';
 import { accountingApi } from '../../api/purchase';
 import { colors, radius, spacing, shadows, typography } from '../../theme/theme';
+import { formatDate } from '../../utils/dateUtils';
 
 export default function VoucherScreen() {
   const route = useRoute();
@@ -68,15 +69,15 @@ export default function VoucherScreen() {
 
   // Metadata formatting
   const billDate = bill.invoiceDate
-    ? String(bill.invoiceDate).slice(0, 10)
+    ? formatDate(bill.invoiceDate)
     : move?.date
-    ? String(move.date).slice(0, 10)
+    ? formatDate(move.date)
     : '—';
 
   const createdDate = bill.createdAt
-    ? String(bill.createdAt).slice(0, 10)
+    ? formatDate(bill.createdAt)
     : move?.createdAt
-    ? String(move.createdAt).slice(0, 10)
+    ? formatDate(move.createdAt)
     : '—';
 
   const divisionName = bill.division?.name || '—';
