@@ -46,8 +46,54 @@ export const salesApi = {
     return data;
   },
 
+  deliverGoods: async id => {
+    const { data } = await client.post(`/sales/orders/${id}/deliver-goods`);
+    return data;
+  },
+
   cancelOrder: async id => {
     const { data } = await client.post(`/sales/orders/${id}/cancel`);
+    return data;
+  },
+};
+
+export const customerInvoicesApi = {
+  list: async ({ state, search, limit } = {}) => {
+    const params = {};
+    if (state && state !== 'all') params.state = state;
+    if (search) params.search = search;
+    if (limit) params.limit = limit;
+    const { data } = await client.get('/customer-invoices', { params });
+    return data;
+  },
+
+  getStats: async () => {
+    const { data } = await client.get('/customer-invoices/stats');
+    return data;
+  },
+
+  getById: async id => {
+    const { data } = await client.get(`/customer-invoices/${id}`);
+    return data;
+  },
+
+  update: async (id, payload) => {
+    const { data } = await client.patch(`/customer-invoices/${id}`, payload);
+    return data;
+  },
+
+  validate: async id => {
+    const { data } = await client.patch(`/customer-invoices/${id}/validate`);
+    return data;
+  },
+
+  registerPayment: async (id, payload) => {
+    const { data } = await client.post(`/customer-invoices/${id}/register-payment`, payload);
+    return data;
+  },
+
+  cancel: async id => {
+    const { data } = await client.patch(`/customer-invoices/${id}/cancel`);
     return data;
   },
 };

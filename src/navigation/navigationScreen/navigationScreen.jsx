@@ -13,5 +13,7 @@ export const navigationScreen = {
   SALES_ORDERS_LIST: 'SalesOrdersList',
   SALES_ORDER_FORM: 'SalesOrderForm',
   SALES_ORDER_DETAIL: 'SalesOrderDetail',
+  CUSTOMER_INVOICES: 'CustomerInvoices',
+  CUSTOMER_INVOICE_DETAIL: 'CustomerInvoiceDetail',
   VOUCHER: 'VoucherScreen',
 };

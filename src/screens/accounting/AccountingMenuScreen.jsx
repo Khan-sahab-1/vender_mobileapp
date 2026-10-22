@@ -8,10 +8,17 @@ import { navigationScreen } from '../../navigation/navigationScreen/navigationSc
 
 const OPERATIONS_MENU = [
   {
+    key: 'customer-invoices',
+    icon: '📄',
+    title: 'Customer Invoices (Bills)',
+    subtitle: 'Manage client invoices, payments & receivable ledger',
+    screen: navigationScreen.CUSTOMER_INVOICES,
+  },
+  {
     key: 'vendor-bills',
     icon: '🧾',
     title: 'Vendor Bills',
-    subtitle: 'Manage supplier bills, payments & ledger entries',
+    subtitle: 'Manage supplier bills, payments & payable ledger',
     screen: navigationScreen.VENDORS_BILLS,
   },
 ];

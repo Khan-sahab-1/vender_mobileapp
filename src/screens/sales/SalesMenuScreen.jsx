@@ -14,6 +14,13 @@ const OPERATIONS_MENU = [
     subtitle: 'Quotations & customer sales orders',
     screen: navigationScreen.SALES_ORDERS_LIST || 'SalesOrdersList',
   },
+  {
+    key: 'customer-invoices',
+    icon: '🧾',
+    title: 'Customer Invoices (Bills)',
+    subtitle: 'Client invoices, payments & balances',
+    screen: navigationScreen.CUSTOMER_INVOICES,
+  },
 ];
 
 const DEFAULT_SALES_MODULES = [

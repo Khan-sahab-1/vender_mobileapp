@@ -46,12 +46,31 @@ export default function VoucherScreen() {
 
   const allLines = move?.lines || bill.accountMove?.lines || [];
 
-  // Exclude the 3rd line (Vendor Ledger / Accounts Payable) as requested
+  const isOutInvoice =
+    move?.moveType === 'out_invoice' ||
+    bill.moveType === 'out_invoice' ||
+    (bill.invoiceNumber && bill.invoiceNumber.startsWith('INV')) ||
+    Boolean(bill.customerName || bill.customerId);
+
+  // Exclude the partner ledger line (Receivable for customer invoice, Payable for vendor bill)
   const lines = allLines.filter(ml => {
     const rawName = (ml.account?.name || '').toLowerCase();
     const type = ml.account?.type;
     const code = ml.account?.code;
     const lineName = (ml.name || '').toLowerCase();
+
+    if (isOutInvoice) {
+      const isReceivable =
+        type === 'receivable' ||
+        code === '105001' ||
+        rawName.includes('customer ledger') ||
+        rawName.includes('receivable') ||
+        rawName.includes('debtor') ||
+        lineName.includes('accounts receivable') ||
+        (Number(ml.debit) > 0 && Number(ml.credit) === 0);
+      return !isReceivable;
+    }
+
     const isPayable =
       type === 'payable' ||
       code === '205001' ||
@@ -63,7 +82,12 @@ export default function VoucherScreen() {
   });
 
   const totalAmount = lines.reduce(
-    (s, l) => s + (Number(l.debit || 0) || Number(l.amount || 0) || 0),
+    (s, l) => {
+      const amt = isOutInvoice
+        ? (Number(l.credit || 0) || Number(l.amount || 0) || Number(l.debit || 0))
+        : (Number(l.debit || 0) || Number(l.amount || 0) || 0);
+      return s + amt;
+    },
     0,
   );
 
@@ -82,12 +106,19 @@ export default function VoucherScreen() {
 
   const divisionName = bill.division?.name || '—';
   const journalName =
-    bill.journal?.name || move?.journal?.name || 'Vendor Bills (BILL)';
+    bill.journal?.name ||
+    move?.journal?.name ||
+    (isOutInvoice ? 'Customer Invoices (INV)' : 'Vendor Bills (BILL)');
   const partnerName =
-    bill.vendorName || bill.vendor?.name || move?.partner?.name || '—';
+    bill.customerName ||
+    bill.customer?.name ||
+    bill.vendorName ||
+    bill.vendor?.name ||
+    move?.partner?.name ||
+    '—';
   const voucherNumber =
-    move?.name || bill.accountMove?.name || bill.billNumber || 'VOUCHER';
-  const sourceDoc = bill.sourceDocument || bill.billNumber || move?.ref || '—';
+    move?.name || bill.accountMove?.name || bill.invoiceNumber || bill.billNumber || 'VOUCHER';
+  const sourceDoc = bill.sourceDocument || bill.invoiceNumber || bill.billNumber || move?.ref || '—';
 
   return (
     <ScreenContainer>
@@ -136,11 +167,15 @@ export default function VoucherScreen() {
 
             <View style={styles.metaRow}>
               <View style={styles.metaCol}>
-                <Text style={styles.metaLabel}>Vendor / Partner</Text>
+                <Text style={styles.metaLabel}>
+                  {isOutInvoice ? 'Customer / Partner' : 'Vendor / Partner'}
+                </Text>
                 <Text style={styles.metaVal}>👤 {partnerName}</Text>
               </View>
               <View style={styles.metaCol}>
-                <Text style={styles.metaLabel}>Source PO / Ref</Text>
+                <Text style={styles.metaLabel}>
+                  {isOutInvoice ? 'Source SO / Ref' : 'Source PO / Ref'}
+                </Text>
                 <Text style={styles.metaVal}>📄 {sourceDoc}</Text>
               </View>
             </View>
@@ -182,7 +217,9 @@ export default function VoucherScreen() {
                 const rawName = ml.account?.name || ml.name || 'Account';
                 const code = ml.account?.code || '';
                 const accName = code ? `${code} · ${rawName}` : rawName;
-                const amt = Number(ml.debit || 0) || Number(ml.amount || 0) || 0;
+                const amt = isOutInvoice
+                  ? (Number(ml.credit || 0) || Number(ml.amount || 0) || Number(ml.debit || 0))
+                  : (Number(ml.debit || 0) || Number(ml.amount || 0) || 0);
 
                 return (
                   <View key={ml.id || idx} style={styles.tableRow}>

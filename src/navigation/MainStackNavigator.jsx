@@ -31,6 +31,8 @@ import SalesMenuScreen from '../screens/sales/SalesMenuScreen';
 import SalesOrdersListScreen from '../screens/sales/SalesOrdersListScreen';
 import SalesOrderDetailScreen from '../screens/sales/SalesOrderDetailScreen';
 import SalesOrderFormScreen from '../screens/sales/SalesOrderFormScreen';
+import CustomerInvoicesScreen from '../screens/sales/CustomerInvoicesScreen';
+import CustomerInvoiceDetailScreen from '../screens/sales/CustomerInvoiceDetailScreen';
 import UsersListScreen from '../screens/settings/UsersListScreen';
 import UserFormScreen from '../screens/settings/UserFormScreen';
 
@@ -204,6 +206,16 @@ export default function MainStackNavigator() {
         name={navigationScreen.CHART_OF_ACCOUNTS}
         component={ChartOfAccountsScreen}
         options={{ title: 'Chart of Accounts' }}
+      />
+      <Stack.Screen
+        name={navigationScreen.CUSTOMER_INVOICES}
+        component={CustomerInvoicesScreen}
+        options={{ title: 'Customer Invoices' }}
+      />
+      <Stack.Screen
+        name={navigationScreen.CUSTOMER_INVOICE_DETAIL}
+        component={CustomerInvoiceDetailScreen}
+        options={{ title: 'Customer Invoice' }}
       />
      
     </Stack.Navigator>

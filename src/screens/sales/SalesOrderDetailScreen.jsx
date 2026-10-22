@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import HeaderActionButton from '../../components/HeaderActionButton';
+import StateBadge from '../../components/StateBadge';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { salesApi } from '../../api/sales';
 import { colors, radius, spacing, typography, shadows } from '../../theme/theme';
@@ -24,6 +25,30 @@ export default function SalesOrderDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchOrderDetail = async (showLoadingSpinner = false) => {
+    if (!id) return;
+    try {
+      if (showLoadingSpinner) setLoading(true);
+      const data = await salesApi.getOrderDetail(id);
+      setOrder(data);
+    } catch (err) {
+      setError(err.message || 'Could not load Sales Order.');
+    } finally {
+      if (showLoadingSpinner) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOrderDetail(true);
+  }, [id]);
+
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      fetchOrderDetail(false);
+    });
+    return unsub;
+  }, [navigation, id]);
 
   const handleSendForApproval = async () => {
     Alert.alert(
@@ -65,9 +90,29 @@ export default function SalesOrderDetailScreen() {
           onPress: async () => {
             try {
               setActionLoading(true);
-              await salesApi.approveOrder(order.id);
-              Alert.alert('Order Approved!', 'Sales Order has been approved successfully.');
-              const updated = await salesApi.getOrderDetail(order.id);
+              const updated = await salesApi.approveOrder(order.id);
+              const bill = updated?.customerInvoice;
+              const picking = updated?.stockPicking;
+              Alert.alert(
+                'SO Approved!',
+                `Sales Order ${updated.name || updated.soNumber} approved!\n\n🧾 Customer Bill: ${bill?.invoiceNumber || 'Draft Bill'}\n📦 Delivery Order: ${picking?.name || 'Created'}\n\nInventory dispatch & Accounting entries are ready!`,
+                [
+                  { text: 'Stay Here', style: 'cancel' },
+                  {
+                    text: 'Open Customer Bill',
+                    onPress: () => {
+                      if (bill) {
+                        navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                          invoice: bill,
+                          invoiceId: bill.id,
+                        });
+                      } else {
+                        navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+                      }
+                    },
+                  },
+                ],
+              );
               setOrder(updated);
             } catch (err) {
               Alert.alert(
@@ -81,6 +126,51 @@ export default function SalesOrderDetailScreen() {
         },
       ],
     );
+  };
+
+  const handleDeliverGoods = async () => {
+    if (!order?.id) return;
+    const billState = order.customerInvoice?.state?.toLowerCase();
+    const isBillValidated =
+      billState === 'open' || billState === 'posted' || billState === 'paid';
+
+    if (!isBillValidated) {
+      Alert.alert(
+        'Invoice Validation Required',
+        `Delivery cannot be validated yet!\n\nThe Customer Bill (${order.customerInvoice?.invoiceNumber || 'Draft'}) must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Customer Bill',
+            onPress: () => {
+              if (order.customerInvoice) {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: order.customerInvoice,
+                  invoiceId: order.customerInvoice.id,
+                });
+              } else {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const updated = await salesApi.deliverGoods(order.id);
+      setOrder(updated);
+      Alert.alert(
+        'Stock Updated!',
+        `Goods delivered for ${updated.name || updated.soNumber}!\n\nDelivery ${updated?.stockPicking?.name || ''} validated and deducted from Warehouse on-hand stock.`,
+      );
+    } catch (err) {
+      Alert.alert('Validation Error', err?.response?.data?.message || err?.message || 'Failed to deliver goods');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleCancel = async () => {
@@ -131,30 +221,6 @@ export default function SalesOrderDetailScreen() {
     });
   }, [navigation, order, isEditable, id]);
 
-  const fetchOrderDetail = async (showLoadingSpinner = false) => {
-    if (!id) return;
-    try {
-      if (showLoadingSpinner) setLoading(true);
-      const data = await salesApi.getOrderDetail(id);
-      setOrder(data);
-    } catch (err) {
-      setError(err.message || 'Could not load Sales Order.');
-    } finally {
-      if (showLoadingSpinner) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchOrderDetail(true);
-  }, [id]);
-
-  useEffect(() => {
-    const unsub = navigation.addListener('focus', () => {
-      fetchOrderDetail(false);
-    });
-    return unsub;
-  }, [navigation, id]);
-
   if (loading) {
     return (
       <View style={styles.centerBox}>
@@ -182,57 +248,175 @@ export default function SalesOrderDetailScreen() {
       maximumFractionDigits: 2,
     });
 
-  const getStateBadge = state => {
-    switch (state) {
-      case 'draft':
-        return { label: 'Quotation (Draft)', bg: '#FEF3C7', text: '#B45309' };
-      case 'sent_for_approval':
-      case 'to_approve':
-        return { label: 'Pending Approval', bg: '#EDE9FE', text: '#7C3AED' };
-      case 'approved':
-      case 'sale':
-        return { label: 'Approved', bg: '#DCFCE7', text: '#15803D' };
-      case 'done':
-        return { label: 'Locked / Done', bg: '#F1F5F9', text: '#475569' };
-      case 'cancel':
-        return { label: 'Cancelled', bg: '#FEE2E2', text: '#B91C1C' };
-      default:
-        return { label: state || 'Draft', bg: '#F1F5F9', text: '#475569' };
-    }
-  };
+  const currentState = order.state || 'draft';
+  const isApproved = currentState === 'approved' || currentState === 'sale';
+  const isToApprove = currentState === 'to_approve' || currentState === 'sent_for_approval';
+  const isDraft = currentState === 'draft';
 
-  const badge = order ? getStateBadge(order.state) : {};
+  const billState = order.customerInvoice?.state?.toLowerCase();
+  const isBillValidated =
+    billState === 'open' || billState === 'posted' || billState === 'paid';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Order Status Card */}
-      <View style={[styles.card, shadows.sm]}>
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.soNumber}>{order.soNumber}</Text>
-            <Text style={styles.dateText}>Date: {order.date ? formatDate(order.date) : '—'}</Text>
+      {/* 1. STATE BANNER / STEPPER CARD (Matching PO Form Exactly) */}
+      <View style={[styles.stepperCard, shadows.sm]}>
+        <View style={styles.stepperTop}>
+          <Text style={styles.stepperTitle}>{order.soNumber || order.name}</Text>
+          <StateBadge state={currentState} />
+        </View>
+
+        <View style={styles.stepTrack}>
+          <View style={[styles.stepDot, styles.stepActive]}>
+            <Text style={styles.stepDotNum}>1</Text>
           </View>
-          <View style={styles.headerRightCol}>
-            <View style={[styles.statePill, { backgroundColor: badge.bg }]}>
-              <Text style={[styles.statePillText, { color: badge.text }]}>
-                {badge.label?.toUpperCase()}
-              </Text>
+          <Text style={styles.stepLabel}>Draft</Text>
+
+          <View
+            style={[
+              styles.stepLine,
+              (isToApprove || isApproved) && styles.stepLineActive,
+            ]}
+          />
+
+          <View
+            style={[
+              styles.stepDot,
+              (isToApprove || isApproved) && styles.stepActive,
+            ]}>
+            <Text style={styles.stepDotNum}>2</Text>
+          </View>
+          <Text style={styles.stepLabel}>To Approve</Text>
+
+          <View
+            style={[
+              styles.stepLine,
+              isApproved && styles.stepLineActive,
+            ]}
+          />
+
+          <View
+            style={[
+              styles.stepDot,
+              isApproved && styles.stepActiveSuccess,
+            ]}>
+            <Text style={styles.stepDotNum}>✓</Text>
+          </View>
+          <Text style={styles.stepLabel}>Approved</Text>
+        </View>
+
+        {/* Direct Bill Linked Button (Matching PO form) */}
+        {order.customerInvoice && (
+          <TouchableOpacity
+            style={styles.linkedBillBtn}
+            onPress={() =>
+              navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                invoice: order.customerInvoice,
+                invoiceId: order.customerInvoiceId || order.customerInvoice.id,
+              })
+            }>
+            <Text style={styles.linkedBillBtnText}>
+              🧾 View Generated Customer Bill: {order.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Linked Stock Delivery & Goods Dispatch (Matching PO form) */}
+        {order.stockPicking && (
+          <View style={styles.linkedReceiptBox}>
+            <View style={styles.linkedReceiptHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.linkedReceiptTitle}>
+                  📦 Outgoing Delivery: {order.stockPicking.name}
+                </Text>
+                <Text style={styles.linkedReceiptSub}>
+                  Destination: Customer Delivery Location
+                </Text>
+              </View>
+              <StateBadge state={order.stockPicking.state} />
             </View>
-            {isEditable && (
+
+            {order.stockPicking.state === 'done' ? (
+              <View style={styles.receiptDoneBanner}>
+                <Text style={styles.receiptDoneBannerText}>
+                  ✓ Goods Delivered & Warehouse Stock Updated
+                </Text>
+              </View>
+            ) : (
               <TouchableOpacity
-                style={styles.quickEditBtn}
-                onPress={handleGoToEdit}
-                activeOpacity={0.7}>
-                <Text style={styles.quickEditBtnText}>✏️ Edit</Text>
+                style={[
+                  styles.btnReceiveGoods,
+                  !isBillValidated && styles.btnReceiveGoodsLocked,
+                ]}
+                activeOpacity={0.8}
+                disabled={actionLoading}
+                onPress={handleDeliverGoods}>
+                <Text
+                  style={[
+                    styles.btnReceiveGoodsText,
+                    !isBillValidated && styles.btnReceiveGoodsTextLocked,
+                  ]}>
+                  {actionLoading
+                    ? 'Delivering...'
+                    : isBillValidated
+                    ? '📦 Deliver Goods (Update Warehouse Stock) ✓'
+                    : '🔒 Validate Bill First to Deliver Stock'}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
+        )}
+
+        {/* Workflow Action Buttons (Draft / Approval) */}
+        {isDraft && (
+          <TouchableOpacity
+            style={styles.btnSendApproval}
+            onPress={handleSendForApproval}
+            disabled={actionLoading}
+            activeOpacity={0.8}>
+            <Text style={styles.btnSendApprovalText}>
+              {actionLoading ? 'Sending...' : '📤 Send for Approval →'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {isToApprove && (
+          <View style={styles.actionRowGroup}>
+            <TouchableOpacity
+              style={styles.btnApproveOrder}
+              onPress={handleApprove}
+              disabled={actionLoading}
+              activeOpacity={0.8}>
+              <Text style={styles.btnApproveOrderText}>
+                {actionLoading ? 'Approving...' : '✓ Approve Sale Order'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.btnCancelOrder}
+              onPress={handleCancel}
+              disabled={actionLoading}
+              activeOpacity={0.8}>
+              <Text style={styles.btnCancelOrderText}>✕ Reject / Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* 2. CUSTOMER & DELIVERY DETAILS CARD */}
+      <View style={[styles.card, shadows.sm]}>
+        <View style={styles.cardHeaderRow}>
+          <Text style={styles.sectionLabel}>CUSTOMER & DELIVERY DETAILS</Text>
+          {isEditable && (
+            <TouchableOpacity
+              style={styles.quickEditBtn}
+              onPress={handleGoToEdit}
+              activeOpacity={0.7}>
+              <Text style={styles.quickEditBtnText}>✏️ Edit</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.divider} />
-
-        {/* Customer & Addresses */}
-        <Text style={styles.sectionLabel}>CUSTOMER & DELIVERY</Text>
         <Text style={styles.customerName}>{order.customer}</Text>
         {order.poRefNo ? (
           <Text style={styles.metaRow}>🔖 Client PO #: {order.poRefNo}</Text>
@@ -259,12 +443,12 @@ export default function SalesOrderDetailScreen() {
             🚚 Transporter: {order.transporterName || order.transporter?.name}
           </Text>
         ) : null}
-        {order.salesperson ? (
-          <Text style={styles.metaRow}>👤 Salesperson: {order.salesperson}</Text>
+        {order.orderDate ? (
+          <Text style={styles.metaRow}>📅 Order Date: {formatDate(order.orderDate)}</Text>
         ) : null}
       </View>
 
-      {/* Order Lines */}
+      {/* 3. ORDER ITEMS LINES CARD */}
       <View style={[styles.card, shadows.sm]}>
         <Text style={styles.sectionLabel}>ORDER ITEMS ({order.lines?.length || 0})</Text>
 
@@ -279,7 +463,7 @@ export default function SalesOrderDetailScreen() {
                   </Text>
                 ) : null}
                 <Text style={styles.itemQty}>
-                  Qty: {item.quantity} {item.uom} × {formatCurrency(item.unitPrice)}
+                  Qty: {item.quantity} {item.uom || 'Unit'} × {formatCurrency(item.unitPrice)}
                 </Text>
               </View>
               <Text style={styles.itemSubtotal}>{formatCurrency(item.subtotal)}</Text>
@@ -290,7 +474,7 @@ export default function SalesOrderDetailScreen() {
         )}
       </View>
 
-      {/* Financial Summary */}
+      {/* 4. TOTALS & ACCOUNTING SUMMARY CARD */}
       <View style={[styles.card, shadows.sm]}>
         <Text style={styles.sectionLabel}>TOTALS & ACCOUNTING</Text>
 
@@ -310,66 +494,6 @@ export default function SalesOrderDetailScreen() {
           <Text style={styles.grandTotalLabel}>Grand Total:</Text>
           <Text style={styles.grandTotalVal}>{formatCurrency(order.totalAmount)}</Text>
         </View>
-
-        {order.invoiceStatus ? (
-          <View style={styles.invoiceStatusRow}>
-            <Text style={styles.invoiceStatusLabel}>Invoice Status: </Text>
-            <Text style={styles.invoiceStatusVal}>{order.invoiceStatus}</Text>
-          </View>
-        ) : null}
-
-        {/* Workflow Actions */}
-      
-
-        {order.state === 'draft' && (
-          <TouchableOpacity
-            style={styles.btnSendApproval}
-            onPress={handleSendForApproval}
-            disabled={actionLoading}
-            activeOpacity={0.8}>
-            <Text style={styles.btnSendApprovalText}>
-              {actionLoading ? 'Sending...' : '📤 Send for Approval →'}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {(order.state === 'sent_for_approval' || order.state === 'to_approve') && (
-          <View style={styles.actionRowGroup}>
-            <TouchableOpacity
-              style={styles.btnApproveOrder}
-              onPress={handleApprove}
-              disabled={actionLoading}
-              activeOpacity={0.8}>
-              <Text style={styles.btnApproveOrderText}>
-                {actionLoading ? 'Approving...' : '✓ Approve Sale Order'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.btnCancelOrder}
-              onPress={handleCancel}
-              disabled={actionLoading}
-              activeOpacity={0.8}>
-              <Text style={styles.btnCancelOrderText}>✕ Reject / Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {(order.state === 'approved' || order.state === 'sale') && (
-          <View style={styles.approvedStatusTag}>
-            <Text style={styles.approvedStatusTagText}>
-              ✓ Sale Order Approved & Confirmed
-            </Text>
-          </View>
-        )}
-
-        {order.state === 'cancel' && (
-          <View style={styles.cancelledStatusTag}>
-            <Text style={styles.cancelledStatusTagText}>
-              ✕ Sale Order Cancelled
-            </Text>
-          </View>
-        )}
       </View>
     </ScrollView>
   );
@@ -383,153 +507,7 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.md,
     paddingBottom: spacing.xxl,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  soNumber: {
-    ...typography.h2,
-    color: '#0F172A',
-    fontWeight: '800',
-    fontSize: 18,
-  },
-  dateText: {
-    ...typography.caption,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  statePill: {
-    borderRadius: radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  pillSale: {
-    backgroundColor: '#DCFCE7',
-  },
-  pillDraft: {
-    backgroundColor: '#FEF3C7',
-  },
-  statePillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#F1F5F9',
-    marginVertical: spacing.sm + 2,
-  },
-  sectionLabel: {
-    ...typography.tiny,
-    color: '#94A3B8',
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: spacing.xs,
-  },
-  customerName: {
-    ...typography.bodyBold,
-    color: '#0F172A',
-    fontSize: 15,
-    marginBottom: 4,
-  },
-  metaRow: {
-    fontSize: 13,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
-  },
-  itemMain: {
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  itemName: {
-    ...typography.bodyBold,
-    color: '#0F172A',
-    fontSize: 14,
-  },
-  itemDesc: {
-    ...typography.caption,
-    color: '#64748B',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  itemQty: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  itemSubtotal: {
-    ...typography.bodyBold,
-    color: '#0F172A',
-    fontSize: 14,
-  },
-  emptyLinesText: {
-    ...typography.caption,
-    color: '#94A3B8',
-    textAlign: 'center',
-    marginVertical: spacing.md,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3,
-  },
-  summaryLabel: {
-    fontSize: 13,
-    color: '#64748B',
-  },
-  summaryVal: {
-    fontSize: 13,
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  grandTotalLabel: {
-    ...typography.bodyBold,
-    color: '#0F172A',
-    fontSize: 15,
-  },
-  grandTotalVal: {
-    ...typography.h2,
-    color: '#2563EB',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  invoiceStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    paddingTop: spacing.xs,
-    borderTopWidth: 1,
-    borderTopColor: '#F8FAFC',
-  },
-  invoiceStatusLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
-  },
-  invoiceStatusVal: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#475569',
-    textTransform: 'capitalize',
+    gap: spacing.md,
   },
   centerBox: {
     flex: 1,
@@ -538,147 +516,300 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
   },
   loadingText: {
-    ...typography.caption,
-    color: '#64748B',
+    ...typography.body,
+    color: colors.textMuted,
     marginTop: spacing.sm,
   },
   errorText: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
     marginBottom: spacing.md,
+    textAlign: 'center',
   },
   backBtn: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
   },
   backBtnText: {
-    color: colors.text,
+    color: '#FFFFFF',
     fontWeight: '700',
   },
-  headerRightCol: {
-    alignItems: 'flex-end',
-    gap: 6,
+  stepperCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  quickEditBtn: {
+  stepperTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  stepperTitle: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  stepTrack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  stepDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepActive: {
+    backgroundColor: colors.primary,
+  },
+  stepActiveSuccess: {
+    backgroundColor: '#16A34A',
+  },
+  stepDotNum: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepLabel: {
+    ...typography.tiny,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginLeft: 6,
+    marginRight: 8,
+  },
+  stepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: colors.border,
+    marginHorizontal: 4,
+  },
+  stepLineActive: {
+    backgroundColor: colors.primary,
+  },
+  linkedBillBtn: {
     backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: '#93C5FD',
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  quickEditBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  btnEditOrder: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#3B82F6',
-    borderRadius: radius.md,
-    paddingVertical: 13,
+    borderRadius: radius.xs,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.sm,
+    marginTop: spacing.xs,
   },
-  btnEditOrderText: {
+  linkedBillBtnText: {
     color: '#1D4ED8',
-    fontWeight: '800',
-    fontSize: 14,
-  },
-  btnConfirmOrder: {
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
-  },
-  btnConfirmOrderText: {
-    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '700',
-    fontSize: 14,
+  },
+  linkedReceiptBox: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: radius.xs,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  linkedReceiptHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  linkedReceiptTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  linkedReceiptSub: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 2,
+  },
+  receiptDoneBanner: {
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 6,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  receiptDoneBannerText: {
+    color: '#15803D',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  btnReceiveGoods: {
+    backgroundColor: '#16A34A',
+    paddingVertical: 9,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  btnReceiveGoodsLocked: {
+    backgroundColor: '#E2E8F0',
+  },
+  btnReceiveGoodsText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  btnReceiveGoodsTextLocked: {
+    color: '#64748B',
   },
   btnSendApproval: {
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    paddingVertical: 14,
-    borderRadius: radius.md,
+    backgroundColor: '#F59E0B',
+    paddingVertical: 11,
+    borderRadius: radius.xs,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   btnSendApprovalText: {
-    color: '#B45309',
-    fontWeight: '700',
-    fontSize: 14,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
   },
   actionRowGroup: {
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
   },
   btnApproveOrder: {
-    flex: 1.5,
+    flex: 2,
     backgroundColor: '#16A34A',
-    paddingVertical: 14,
-    borderRadius: radius.md,
+    paddingVertical: 11,
+    borderRadius: radius.xs,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   btnApproveOrderText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 14,
+    fontWeight: '800',
+    fontSize: 13,
   },
   btnCancelOrder: {
     flex: 1,
-    backgroundColor: '#FEE2E2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    paddingVertical: 14,
-    borderRadius: radius.md,
+    backgroundColor: '#EF4444',
+    paddingVertical: 11,
+    borderRadius: radius.xs,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   btnCancelOrderText: {
-    color: '#DC2626',
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
   },
-  approvedStatusTag: {
-    backgroundColor: '#DCFCE7',
-    borderWidth: 1,
-    borderColor: '#86EFAC',
-    paddingVertical: 12,
+  card: {
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
-  },
-  approvedStatusTagText: {
-    color: '#15803D',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  cancelledStatusTag: {
-    backgroundColor: '#FEE2E2',
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
+    borderColor: colors.border,
   },
-  cancelledStatusTagText: {
-    color: '#B91C1C',
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  sectionLabel: {
+    ...typography.caption,
     fontWeight: '800',
-    fontSize: 13,
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+  },
+  quickEditBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  quickEditBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  customerName: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  metaRow: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 4,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceSubtle,
+  },
+  itemMain: {
+    flex: 1,
+    paddingRight: spacing.sm,
+  },
+  itemName: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  itemDesc: {
+    ...typography.tiny,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  itemQty: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 3,
+  },
+  itemSubtotal: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  emptyLinesText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginVertical: spacing.md,
+    textAlign: 'center',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginVertical: 4,
+  },
+  summaryLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  summaryVal: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  grandTotalLabel: {
+    ...typography.bodyBold,
+    color: colors.text,
+  },
+  grandTotalVal: {
+    ...typography.h3,
+    fontWeight: '800',
+    color: colors.primary,
   },
 });
-

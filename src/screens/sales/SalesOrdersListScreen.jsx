@@ -281,6 +281,40 @@ export default function SalesOrdersListScreen() {
             )}
           </View>
         )}
+
+        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
+          <View style={styles.listActionsRow}>
+            <TouchableOpacity
+              style={styles.cardBtnBill}
+              activeOpacity={0.8}
+              onPress={() =>
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: item.customerInvoice,
+                  invoiceId: item.customerInvoiceId || item.customerInvoice.id,
+                })
+              }>
+              <Text style={styles.cardBtnBillText}>
+                🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
+          <TouchableOpacity
+            style={styles.cardBtnBill}
+            activeOpacity={0.8}
+            onPress={() =>
+              navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                invoice: item.customerInvoice,
+                invoiceId: item.customerInvoiceId || item.customerInvoice.id,
+              })
+            }>
+            <Text style={styles.cardBtnBillText}>
+              🧾 View Customer Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+            </Text>
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
     );
   };
@@ -385,6 +419,22 @@ export default function SalesOrdersListScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+        )}
+
+        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
+          <TouchableOpacity
+            style={styles.cardBtnBill}
+            activeOpacity={0.8}
+            onPress={() =>
+              navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                invoice: item.customerInvoice,
+                invoiceId: item.customerInvoiceId || item.customerInvoice.id,
+              })
+            }>
+            <Text style={styles.cardBtnBillText}>
+              🧾 View Customer Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+            </Text>
+          </TouchableOpacity>
         )}
       </TouchableOpacity>
     );
@@ -931,6 +981,23 @@ const styles = StyleSheet.create({
     color: '#15803D',
     fontWeight: '700',
     fontSize: 12,
+  },
+  cardBtnBill: {
+    backgroundColor: '#E0F2FE',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginTop: spacing.xs,
+    flex: 1,
+  },
+  cardBtnBillText: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '700',
   },
   centerBox: {
     flex: 1,
