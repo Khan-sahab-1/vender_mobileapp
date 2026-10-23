@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import HeaderActionButton from '../../components/HeaderActionButton';
+import StateBadge from '../../components/StateBadge';
 import { navigationScreen } from '../../navigation/navigationScreen/navigationScreen';
 import { salesApi } from '../../api/sales';
 import { colors, radius, spacing, typography, shadows } from '../../theme/theme';
@@ -20,7 +21,7 @@ import { formatDate } from '../../utils/dateUtils';
 
 const ORDER_TYPE_LABELS = {
   adhoc: { label: 'Adhoc', bg: '#EFF6FF', fg: '#2563EB' },
-  normal: { label: 'Normal', bg: '#F3E8FF', fg: '#7C3AED' },
+  normal: { label: 'Direct', bg: '#F3E8FF', fg: '#7C3AED' },
   arc: { label: 'ARC', bg: '#FEF3C7', fg: '#B45309' },
   open_order: { label: 'Open', bg: '#E0F2FE', fg: '#0284C7' },
   scheduled: { label: 'Scheduled', bg: '#ECFDF5', fg: '#059669' },
@@ -29,7 +30,7 @@ const ORDER_TYPE_LABELS = {
 const STATE_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'draft', label: 'Draft' },
-  { key: 'sent_for_approval', label: 'To Approve' },
+  { key: 'to_approve', label: 'To Approve' },
   { key: 'approved', label: 'Approved' },
   { key: 'cancel', label: 'Cancelled' },
 ];
@@ -39,7 +40,7 @@ export default function SalesOrdersListScreen() {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Sales Orders (SO)',
+      title: 'Sales Orders',
       headerRight: () => (
         <HeaderActionButton
           title="+ New SO"
@@ -64,68 +65,12 @@ export default function SalesOrdersListScreen() {
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'grid' (default list)
   const [actionLoadingId, setActionLoadingId] = useState(null);
 
-  const handleSendForApproval = async (orderId, orderName) => {
-    Alert.alert(
-      'Send for Approval',
-      `Send Sales Order ${orderName || ''} for management approval?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Send for Approval',
-          onPress: async () => {
-            setActionLoadingId(orderId);
-            try {
-              await salesApi.sendForApproval(orderId);
-              Alert.alert('Success', 'Order sent for management approval!');
-              loadData();
-            } catch (err) {
-              Alert.alert(
-                'Error',
-                err?.response?.data?.message || 'Failed to send for approval',
-              );
-            } finally {
-              setActionLoadingId(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  const handleApprove = async (orderId, orderName) => {
-    Alert.alert(
-      'Approve Sale Order',
-      `Approve Sales Order ${orderName || ''}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve Order',
-          onPress: async () => {
-            setActionLoadingId(orderId);
-            try {
-              await salesApi.approveOrder(orderId);
-              Alert.alert('Success', 'Sales Order approved successfully!');
-              loadData();
-            } catch (err) {
-              Alert.alert(
-                'Error',
-                err?.response?.data?.message || 'Failed to approve order',
-              );
-            } finally {
-              setActionLoadingId(null);
-            }
-          },
-        },
-      ],
-    );
-  };
-
   const loadData = useCallback(async () => {
     try {
       const [ordersData, statsData] = await Promise.all([
         salesApi.getOrders({
           search: search.trim() || undefined,
-          state: selectedState,
+          state: selectedState === 'to_approve' ? 'sent_for_approval' : selectedState,
           limit: 100,
         }).catch(() => []),
         salesApi.getStats().catch(() => ({ totalOrders: 0, quotations: 0, confirmedOrders: 0 })),
@@ -156,67 +101,177 @@ export default function SalesOrdersListScreen() {
     setRefreshing(false);
   };
 
-  const getStateBadge = state => {
-    switch (state) {
-      case 'draft':
-        return { label: 'Draft', bg: '#FEF3C7', text: '#B45309' };
-      case 'sent_for_approval':
-      case 'to_approve':
-        return { label: 'To Approve', bg: '#EDE9FE', text: '#7C3AED' };
-      case 'approved':
-      case 'sale':
-        return { label: 'Approved', bg: '#DCFCE7', text: '#15803D' };
-      case 'done':
-        return { label: 'Locked / Done', bg: '#F1F5F9', text: '#475569' };
-      case 'cancel':
-        return { label: 'Cancelled', bg: '#FEE2E2', text: '#B91C1C' };
-      default:
-        return { label: state || 'Draft', bg: '#F1F5F9', text: '#475569' };
+  // Workflow Action 1: Send for Approval (Transitions to to_approve)
+  const handleSendForApproval = async (orderId, orderName) => {
+    Alert.alert(
+      'Send for Approval',
+      `Send Sales Order ${orderName || ''} for manager approval?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send for Approval',
+          onPress: async () => {
+            setActionLoadingId(orderId);
+            try {
+              await salesApi.sendForApproval(orderId);
+              Alert.alert('Success', `SO ${orderName || ''} is now pending approval.`);
+              loadData();
+            } catch (err) {
+              Alert.alert('Error', err?.response?.data?.message || 'Failed to send for approval');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Workflow Action 2: Admin Approve SO (Direct Customer Bill Created)
+  const handleApprove = async (orderId, orderName) => {
+    Alert.alert(
+      'Approve Sales Order',
+      `Approve SO ${orderName}? This will generate both the Outgoing Delivery (WH/OUT/...) and the Customer Bill.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve SO',
+          onPress: async () => {
+            setActionLoadingId(orderId);
+            try {
+              const res = await salesApi.approveOrder(orderId);
+              const billNo = res?.customerInvoice?.invoiceNumber || 'Draft Bill';
+              const pickingNo = res?.stockPicking?.name || 'Created';
+              Alert.alert(
+                'SO Approved!',
+                `SO ${orderName} approved!\n\n🧾 Customer Bill: ${billNo}\n📦 Delivery Order: ${pickingNo}\n\nInventory dispatch & Accounting entries are ready!`,
+                [
+                  { text: 'OK' },
+                  {
+                    text: 'View Bill',
+                    onPress: () => {
+                      if (res?.customerInvoice) {
+                        navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                          invoice: res.customerInvoice,
+                          invoiceId: res.customerInvoice.id,
+                        });
+                      } else {
+                        navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+                      }
+                    },
+                  },
+                ],
+              );
+              loadData();
+            } catch (err) {
+              Alert.alert('Error', err?.response?.data?.message || 'Failed to approve order');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Workflow Action 3: Deliver Goods (Validate Delivery)
+  const handleDeliverGoods = async order => {
+    const billState = order.customerInvoice?.state?.toLowerCase();
+    const isBillValidated =
+      billState === 'open' || billState === 'posted' || billState === 'paid';
+
+    if (!isBillValidated) {
+      Alert.alert(
+        'Invoice Validation Required',
+        `Stock delivery cannot be validated yet!\n\nThe Customer Bill (${order.customerInvoice?.invoiceNumber || 'Draft'}) must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Customer Bill',
+            onPress: () => {
+              if (order.customerInvoice) {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: order.customerInvoice,
+                  invoiceId: order.customerInvoice.id,
+                });
+              } else {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+              }
+            },
+          },
+        ],
+      );
+      return;
     }
+
+    Alert.alert(
+      'Deliver Goods (Validate Dispatch)',
+      `Deliver goods for ${order.soNumber || order.name}? This will mark the Delivery Order & Moves as DONE and deduct Warehouse on-hand stock.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Deliver & Deduct Stock',
+          onPress: async () => {
+            setActionLoadingId(order.id);
+            try {
+              await salesApi.deliverGoods(order.id);
+              Alert.alert(
+                'Stock Updated!',
+                `Goods for ${order.soNumber || order.name} delivered!\n\nWarehouse stock quants have been updated and stock valuation recorded.`,
+              );
+              loadData();
+            } catch (err) {
+              Alert.alert('Validation Error', err?.response?.data?.message || 'Failed to deliver goods');
+            } finally {
+              setActionLoadingId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const renderListItem = ({ item }) => {
-    const badge = getStateBadge(item.state);
     const typeMeta = ORDER_TYPE_LABELS[item.type] || ORDER_TYPE_LABELS.adhoc;
     const formattedAmount = Number(item.totalAmount || item.amountTotal || 0).toLocaleString('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    const orderDate = item.date ? formatDate(item.date) : 'Today';
+    const orderDate = item.date ? formatDate(item.date) : (item.createdAt ? formatDate(item.createdAt) : 'Today');
     const isActionLoading = actionLoadingId === item.id;
     const customerName =
       typeof item.customer === 'string'
         ? item.customer
-        : item.customer?.name || 'Customer';
+        : item.customer?.name || 'General Customer';
+    const locationName = item.warehouse?.name || item.division?.name || 'Main Warehouse';
+    const isToApprove = item.state === 'sent_for_approval' || item.state === 'to_approve';
+    const isApproved = item.state === 'approved' || item.state === 'sale';
+    const isDraft = item.state === 'draft';
+
+    const billState = item.customerInvoice?.state?.toLowerCase();
+    const isBillValidated =
+      billState === 'open' || billState === 'posted' || billState === 'paid';
 
     return (
       <TouchableOpacity
         style={[styles.listCard, shadows.xs]}
         activeOpacity={0.7}
         onPress={() =>
-          navigation.navigate('SalesOrderDetail', {
-            id: item.id,
-            title: item.soNumber || item.name,
-          })
+          navigation.navigate(navigationScreen.SALES_ORDER_FORM, { order: item, orderId: item.id })
         }>
         {/* Top: SO Number + Type Pill + State Badge */}
         <View style={styles.listCardHeader}>
           <View style={styles.listNumberGroup}>
-            <Text style={styles.listSoNumber}>{item.soNumber || item.name}</Text>
+            <Text style={styles.listSoNumber}>{item.soNumber || item.name || 'Draft SO'}</Text>
             {typeMeta ? (
-              <View style={[styles.listTypePill, { backgroundColor: typeMeta.bg }]}>
-                <Text style={[styles.listTypePillText, { color: typeMeta.fg }]}>
+              <View style={[styles.typePill, { backgroundColor: typeMeta.bg }]}>
+                <Text style={[styles.typePillText, { color: typeMeta.fg }]}>
                   {typeMeta.label}
                 </Text>
               </View>
             ) : null}
           </View>
-          <View style={[styles.stateBadge, { backgroundColor: badge.bg }]}>
-            <Text style={[styles.stateBadgeText, { color: badge.text }]}>
-              {badge.label}
-            </Text>
-          </View>
+          <StateBadge state={item.state} />
         </View>
 
         {/* Middle: Customer + Location/Date + Amount */}
@@ -226,284 +281,324 @@ export default function SalesOrdersListScreen() {
               🏢 {customerName}
             </Text>
             <Text style={styles.listMetaText} numberOfLines={1}>
-              {item.warehouse?.name ? `📍 ${item.warehouse.name} • ` : ''}📅 {orderDate}
+              📍 {locationName} • 📅 {orderDate}
             </Text>
           </View>
 
           <View style={styles.listAmountCol}>
             <Text style={styles.listAmountLabel}>Grand Total</Text>
-            <Text style={styles.listAmountValue}>{formattedAmount}</Text>
+            <Text style={styles.listAmountValue}>
+              {item.currency || 'INR'} {formattedAmount}
+            </Text>
           </View>
         </View>
 
-        {/* Dynamic Workflow Actions on List Item */}
-        {(item.state === 'draft' ||
-          item.state === 'sent_for_approval' ||
-          item.state === 'to_approve') && (
-          <View style={styles.listActionsRow}>
+        {/* Dynamic Workflow Actions on List Item (No Edit Button!) */}
+        <View style={styles.actionRow}>
+          {isDraft && (
             <TouchableOpacity
-              style={styles.listBtnEdit}
-              activeOpacity={0.7}
-              onPress={() =>
-                navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
-                  orderId: item.id,
-                  order: item,
-                })
-              }>
-              <Text style={styles.listBtnEditText}>✏️ Edit</Text>
-            </TouchableOpacity>
-
-            {item.state === 'draft' && (
-              <TouchableOpacity
-                style={styles.listBtnSendApproval}
-                disabled={isActionLoading}
-                onPress={() =>
-                  handleSendForApproval(item.id, item.soNumber || item.name)
-                }>
-                <Text style={styles.listBtnSendApprovalText}>
-                  {isActionLoading ? 'Sending...' : '📤 Send for Approval'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {(item.state === 'sent_for_approval' ||
-              item.state === 'to_approve') && (
-              <TouchableOpacity
-                style={styles.listBtnApprove}
-                disabled={isActionLoading}
-                onPress={() =>
-                  handleApprove(item.id, item.soNumber || item.name)
-                }>
-                <Text style={styles.listBtnApproveText}>
-                  {isActionLoading ? 'Approving...' : '✓ Approve'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
-          <View style={styles.listActionsRow}>
-            <TouchableOpacity
-              style={styles.cardBtnBill}
+              style={styles.btnSendApproval}
               activeOpacity={0.8}
-              onPress={() =>
-                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                  invoice: item.customerInvoice,
-                  invoiceId: item.customerInvoiceId || item.customerInvoice.id,
-                })
-              }>
-              <Text style={styles.cardBtnBillText}>
-                🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+              disabled={isActionLoading}
+              onPress={() => handleSendForApproval(item.id, item.soNumber || item.name)}>
+              <Text style={styles.btnSendApprovalText}>
+                {isActionLoading ? 'Sending...' : 'Send for Approval →'}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
-          <TouchableOpacity
-            style={styles.cardBtnBill}
-            activeOpacity={0.8}
-            onPress={() =>
-              navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                invoice: item.customerInvoice,
-                invoiceId: item.customerInvoiceId || item.customerInvoice.id,
-              })
-            }>
-            <Text style={styles.cardBtnBillText}>
-              🧾 View Customer Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
-            </Text>
-          </TouchableOpacity>
-        )}
+          {isToApprove && (
+            <TouchableOpacity
+              style={styles.btnApprove}
+              activeOpacity={0.8}
+              disabled={isActionLoading}
+              onPress={() => handleApprove(item.id, item.soNumber || item.name)}>
+              <Text style={styles.btnApproveText}>
+                {isActionLoading ? 'Approving...' : '✓ Approve SO'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {isApproved && (
+            <View style={styles.approvedButtonGroup}>
+              {item.customerInvoice && (
+                <TouchableOpacity
+                  style={styles.btnBill}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                      invoice: item.customerInvoice,
+                      invoiceId: item.customerInvoiceId || item.customerInvoice.id,
+                    })
+                  }>
+                  <Text style={styles.btnBillText}>
+                    🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {item.stockPicking && (
+                item.stockPicking.state === 'done' ? (
+                  <View style={styles.receiptDoneTag}>
+                    <Text style={styles.receiptDoneTagText}>
+                      ✓ Stock Delivered ({item.stockPicking.name})
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.btnReceive,
+                      !isBillValidated && styles.btnReceiveLocked,
+                    ]}
+                    activeOpacity={0.8}
+                    disabled={isActionLoading}
+                    onPress={() => handleDeliverGoods(item)}>
+                    <Text
+                      style={[
+                        styles.btnReceiveText,
+                        !isBillValidated && styles.btnReceiveTextLocked,
+                      ]}>
+                      {isActionLoading
+                        ? 'Delivering...'
+                        : isBillValidated
+                        ? `📦 Deliver Goods (${item.stockPicking.name}) →`
+                        : `🔒 Validate Bill First to Deliver Stock`}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              )}
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
 
   const renderOrderItem = ({ item }) => {
-    const badge = getStateBadge(item.state);
     const typeMeta = ORDER_TYPE_LABELS[item.type] || ORDER_TYPE_LABELS.adhoc;
     const formattedAmount = Number(item.totalAmount || item.amountTotal || 0).toLocaleString('en-IN', {
-      style: 'currency',
-      currency: 'INR',
+      minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
     const isActionLoading = actionLoadingId === item.id;
     const customerName =
       typeof item.customer === 'string'
         ? item.customer
-        : item.customer?.name || 'Customer';
+        : item.customer?.name || 'General Customer';
+    const divisionName = item.division?.name || 'Main Division';
+    const warehouseName = item.warehouse?.name || 'Main Warehouse';
+    const isToApprove = item.state === 'sent_for_approval' || item.state === 'to_approve';
+    const isApproved = item.state === 'approved' || item.state === 'sale';
+    const isDraft = item.state === 'draft';
+
+    const billState = item.customerInvoice?.state?.toLowerCase();
+    const isBillValidated =
+      billState === 'open' || billState === 'posted' || billState === 'paid';
 
     return (
       <TouchableOpacity
-        style={[styles.orderCard, shadows.sm]}
-        activeOpacity={0.7}
-        onPress={() => navigation.navigate('SalesOrderDetail', { id: item.id, title: item.soNumber || item.name })}>
-        <View style={styles.cardHeader}>
-          <View style={styles.titleCol}>
-            <View style={styles.soNumberRow}>
-              <Text style={styles.soNumber}>{item.soNumber || item.name}</Text>
-              {typeMeta ? (
-                <View style={[styles.typePill, { backgroundColor: typeMeta.bg }]}>
-                  <Text style={[styles.typePillText, { color: typeMeta.fg }]}>{typeMeta.label}</Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.customerName} numberOfLines={1}>
+        style={[styles.card, shadows.sm]}
+        activeOpacity={0.8}
+        onPress={() =>
+          navigation.navigate(navigationScreen.SALES_ORDER_FORM, { order: item, orderId: item.id })
+        }>
+        {/* Top Row: SO #, Type Pill & State */}
+        <View style={styles.cardTopRow}>
+          <View style={styles.poNumberBox}>
+            <Text style={styles.poNumberText}>{item.soNumber || item.name || 'Draft SO'}</Text>
+            {typeMeta ? (
+              <View style={[styles.typePill, { backgroundColor: typeMeta.bg }]}>
+                <Text style={[styles.typePillText, { color: typeMeta.fg }]}>{typeMeta.label}</Text>
+              </View>
+            ) : null}
+          </View>
+          <StateBadge state={item.state} />
+        </View>
+
+        {/* Customer & Division Info */}
+        <View style={styles.cardBody}>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoIcon}>🏢</Text>
+            <Text style={styles.vendorText} numberOfLines={1}>
               {customerName}
             </Text>
           </View>
-          <View style={[styles.stateBadge, { backgroundColor: badge.bg }]}>
-            <Text style={[styles.stateBadgeText, { color: badge.text }]}>{badge.label}</Text>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoIcon}>🏷️</Text>
+            <Text style={styles.divisionText} numberOfLines={1}>
+              {divisionName} • {warehouseName}
+            </Text>
           </View>
         </View>
 
+        {/* Footer: Date & Total */}
         <View style={styles.cardFooter}>
-          <View style={styles.metaCol}>
-            <Text style={styles.dateText}>📅 {item.date ? formatDate(item.date) : '—'}</Text>
-            {item.salesperson ? (
-              <Text style={styles.salespersonText}>👤 {item.salesperson}</Text>
+          <View style={styles.dateBox}>
+            <Text style={styles.dateLabel}>
+              Order: {item.date ? formatDate(item.date) : (item.createdAt ? formatDate(item.createdAt) : 'Today')}
+            </Text>
+            {item.deliveryDate ? (
+              <Text style={styles.dateSubLabel}>
+                Delivery: {formatDate(item.deliveryDate)}
+              </Text>
             ) : null}
           </View>
-          <View style={styles.amountCol}>
-            <Text style={styles.amountLabel}>Total</Text>
-            <Text style={styles.amountText}>{formattedAmount}</Text>
+          <View style={styles.totalBox}>
+            <Text style={styles.totalLabel}>Grand Total</Text>
+            <Text style={styles.totalAmountText}>
+              {item.currency || 'INR'} {formattedAmount}
+            </Text>
           </View>
         </View>
 
-        {/* Dynamic Workflow Actions on Card */}
-        {item.state === 'draft' && (
-          <View style={styles.cardActionsRow}>
+        {/* Dynamic Workflow Action Buttons (No Edit Button!) */}
+        <View style={styles.actionRow}>
+          {isDraft && (
             <TouchableOpacity
-              style={styles.cardBtnEdit}
-              activeOpacity={0.7}
-              onPress={() =>
-                navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
-                  orderId: item.id,
-                  order: item,
-                })
-              }>
-              <Text style={styles.cardBtnEditText}>✏️ Edit</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.cardBtnSendApproval}
+              style={styles.btnSendApproval}
+              activeOpacity={0.8}
               disabled={isActionLoading}
               onPress={() => handleSendForApproval(item.id, item.soNumber || item.name)}>
-              <Text style={styles.cardBtnSendApprovalText}>
-                {isActionLoading ? 'Sending...' : '📤 Send for Approval →'}
+              <Text style={styles.btnSendApprovalText}>
+                {isActionLoading ? 'Sending...' : 'Send for Approval →'}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {(item.state === 'sent_for_approval' || item.state === 'to_approve') && (
-          <View style={styles.cardActionsRow}>
+          {isToApprove && (
             <TouchableOpacity
-              style={styles.cardBtnEdit}
-              activeOpacity={0.7}
-              onPress={() =>
-                navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
-                  orderId: item.id,
-                  order: item,
-                })
-              }>
-              <Text style={styles.cardBtnEditText}>✏️ Edit</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.cardBtnApprove}
+              style={styles.btnApprove}
+              activeOpacity={0.8}
               disabled={isActionLoading}
               onPress={() => handleApprove(item.id, item.soNumber || item.name)}>
-              <Text style={styles.cardBtnApproveText}>
-                {isActionLoading ? 'Approving...' : '✓ Approve'}
+              <Text style={styles.btnApproveText}>
+                {isActionLoading ? 'Approving...' : '✓ Approve SO'}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {(item.state === 'approved' || item.state === 'sale') && item.customerInvoice && (
-          <TouchableOpacity
-            style={styles.cardBtnBill}
-            activeOpacity={0.8}
-            onPress={() =>
-              navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                invoice: item.customerInvoice,
-                invoiceId: item.customerInvoiceId || item.customerInvoice.id,
-              })
-            }>
-            <Text style={styles.cardBtnBillText}>
-              🧾 View Customer Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
-            </Text>
-          </TouchableOpacity>
-        )}
+          {isApproved && (
+            <View style={styles.approvedButtonGroup}>
+              {item.customerInvoice && (
+                <TouchableOpacity
+                  style={styles.btnBill}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                      invoice: item.customerInvoice,
+                      invoiceId: item.customerInvoiceId || item.customerInvoice.id,
+                    })
+                  }>
+                  <Text style={styles.btnBillText}>
+                    🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {item.stockPicking && (
+                item.stockPicking.state === 'done' ? (
+                  <View style={styles.receiptDoneTag}>
+                    <Text style={styles.receiptDoneTagText}>
+                      ✓ Stock Delivered ({item.stockPicking.name})
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.btnReceive,
+                      !isBillValidated && styles.btnReceiveLocked,
+                    ]}
+                    activeOpacity={0.8}
+                    disabled={isActionLoading}
+                    onPress={() => handleDeliverGoods(item)}>
+                    <Text
+                      style={[
+                        styles.btnReceiveText,
+                        !isBillValidated && styles.btnReceiveTextLocked,
+                      ]}>
+                      {isActionLoading
+                        ? 'Delivering...'
+                        : isBillValidated
+                        ? `📦 Deliver Goods (${item.stockPicking.name}) →`
+                        : `🔒 Validate Bill First to Deliver Stock`}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              )}
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
 
+  const filteredOrders = Array.isArray(orders)
+    ? orders.filter(item => {
+        const itemState = item.state === 'sale' ? 'approved' : item.state;
+        const targetFilter = selectedState === 'to_approve' ? 'sent_for_approval' : selectedState;
+        if (targetFilter !== 'all' && itemState !== targetFilter && item.state !== targetFilter) {
+          return false;
+        }
+        if (!search.trim()) return true;
+        const query = search.toLowerCase();
+        const cName = typeof item.customer === 'string' ? item.customer : item.customer?.name || '';
+        return (
+          (item.name || '').toLowerCase().includes(query) ||
+          (item.soNumber || '').toLowerCase().includes(query) ||
+          cName.toLowerCase().includes(query) ||
+          (item.division?.name || '').toLowerCase().includes(query) ||
+          (item.warehouse?.name || '').toLowerCase().includes(query)
+        );
+      })
+    : [];
+
   return (
     <View style={styles.container}>
-      {/* Top Live Stats Header */}
-      <View style={styles.statsBanner}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNum}>{stats.totalOrders}</Text>
-          <Text style={styles.statLabel}>Total</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statBox}>
-          <Text style={[styles.statNum, { color: '#B45309' }]}>{stats.quotations}</Text>
-          <Text style={styles.statLabel}>Draft</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statBox}>
-          <Text style={[styles.statNum, { color: '#7C3AED' }]}>{stats.pendingApproval || 0}</Text>
-          <Text style={styles.statLabel}>To Approve</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statBox}>
-          <Text style={[styles.statNum, { color: '#15803D' }]}>{stats.confirmedOrders}</Text>
-          <Text style={styles.statLabel}>Approved</Text>
-        </View>
-      </View>
-
-      {/* Search Input */}
-      <View style={styles.searchRow}>
-        <View style={styles.searchWrapper}>
+      {/* Top Search Bar */}
+      <View style={styles.searchWrap}>
+        <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
+            style={styles.searchInput}
+            placeholder="Search SO #, Customer, or Division..."
+            placeholderTextColor={colors.textMuted}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search by SO# or customer..."
-            placeholderTextColor="#94A3B8"
-            style={styles.searchInput}
           />
           {search ? (
-            <TouchableOpacity onPress={() => setSearch('')} style={styles.clearBtn}>
-              <Text style={styles.clearBtnText}>✕</Text>
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Text style={styles.clearIcon}>✕</Text>
             </TouchableOpacity>
           ) : null}
         </View>
       </View>
 
-      {/* State Filter Chips */}
+      {/* Filter Tabs Chips */}
       <View style={styles.filterRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {STATE_FILTERS.map(f => (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.filterChip, selectedState === f.key && styles.filterChipActive]}
-              onPress={() => setSelectedState(f.key)}>
-              <Text style={[styles.filterChipText, selectedState === f.key && styles.filterChipTextActive]}>
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterListContent}>
+          {STATE_FILTERS.map(tab => {
+            const isActive = selectedState === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                onPress={() => setSelectedState(tab.key)}>
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
       {/* View Toggle Bar (List vs Grid) */}
       <View style={styles.viewToggleBar}>
         <Text style={styles.viewOrderCount}>
-          {orders.length} {orders.length === 1 ? 'Order' : 'Orders'}
+          {filteredOrders.length} {filteredOrders.length === 1 ? 'Order' : 'Orders'}
         </Text>
         <View style={styles.toggleButtonGroup}>
           <TouchableOpacity
@@ -534,41 +629,37 @@ export default function SalesOrdersListScreen() {
       </View>
 
       {/* Order List */}
-      {loading ? (
-        <View style={styles.centerBox}>
+      {loading && !refreshing ? (
+        <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Fetching Sales Orders...</Text>
         </View>
       ) : (
         <FlatList
           key={viewMode}
-          data={orders}
-          keyExtractor={item => String(item.id)}
+          data={filteredOrders}
+          keyExtractor={item => String(item.id || item.name)}
           renderItem={viewMode === 'list' ? renderListItem : renderOrderItem}
           contentContainerStyle={viewMode === 'list' ? styles.listModeContent : styles.listContent}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+            />
           }
           ListEmptyComponent={
-            <View style={styles.emptyBox}>
+            <View style={styles.emptyContainer}>
               <Text style={styles.emptyIcon}>🛒</Text>
               <Text style={styles.emptyTitle}>No Sales Orders Found</Text>
-              <Text style={styles.emptySub}>
-                {search ? 'Try modifying your search query' : 'Tap "+ New SO" to create your first Quotation / Sale Order.'}
+              <Text style={styles.emptySubtitle}>
+                {search
+                  ? `No orders matching "${search}"`
+                  : selectedState !== 'all'
+                  ? `No orders in "${selectedState}" state`
+                  : 'Tap "+ New SO" above to create your first Sales Order.'}
               </Text>
-              <TouchableOpacity
-                style={{
-                  marginTop: 14,
-                  backgroundColor: colors.primary,
-                  paddingHorizontal: 16,
-                  paddingVertical: 10,
-                  borderRadius: radius.sm,
-                }}
-                onPress={() => navigation.navigate(navigationScreen.SALES_ORDER_FORM)}>
-                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
-                  + Create Sales Order
-                </Text>
-              </TouchableOpacity>
             </View>
           }
         />
@@ -582,77 +673,40 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
-  statsBanner: {
-    flexDirection: 'row',
-    backgroundColor: '#0F172A',
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  statBox: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statNum: {
-    ...typography.h2,
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  statLabel: {
-    ...typography.tiny,
-    color: '#94A3B8',
-    marginTop: 2,
-    textTransform: 'uppercase',
-  },
-  statDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: '#334155',
-  },
-  searchRow: {
-    flexDirection: 'row',
+  searchWrap: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
   },
-  searchWrapper: {
-    flex: 1,
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
     paddingHorizontal: spacing.sm + 2,
-    height: 40,
+    height: 42,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   searchIcon: {
-    fontSize: 14,
+    fontSize: 16,
     marginRight: spacing.xs,
   },
   searchInput: {
     flex: 1,
     ...typography.body,
-    fontSize: 14,
-    color: '#0F172A',
+    color: colors.text,
     paddingVertical: 0,
   },
-  clearBtn: {
-    padding: 4,
-  },
-  clearBtnText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: 'bold',
+  clearIcon: {
+    fontSize: 14,
+    color: colors.textMuted,
+    padding: spacing.xs,
   },
   filterRow: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
     paddingVertical: spacing.xs,
   },
-  filterScroll: {
+  filterListContent: {
     paddingHorizontal: spacing.md,
     gap: spacing.xs,
   },
@@ -660,52 +714,56 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 6,
     borderRadius: radius.pill,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 6,
   },
   filterChipActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   filterChipText: {
     ...typography.captionBold,
-    color: '#64748B',
+    color: colors.textMuted,
   },
   filterChipTextActive: {
-    color: '#FFFFFF',
+    color: colors.textInverted,
   },
   viewToggleBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
+    paddingVertical: spacing.xs,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
   viewOrderCount: {
-    ...typography.caption,
+    fontSize: 12,
+    fontWeight: '700',
     color: '#64748B',
-    fontWeight: '600',
   },
   toggleButtonGroup: {
     flexDirection: 'row',
     backgroundColor: '#F1F5F9',
-    borderRadius: radius.pill,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderRadius: radius.xs,
+    padding: 2,
+    gap: 2,
   },
   viewToggleBtn: {
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: radius.pill,
+    borderRadius: radius.xs - 1,
   },
   viewToggleBtnActive: {
-    backgroundColor: '#2563EB',
-    shadowColor: '#2563EB',
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    elevation: 2,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
   },
   viewToggleBtnText: {
     fontSize: 12,
@@ -713,48 +771,41 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   viewToggleBtnTextActive: {
-    color: '#FFFFFF',
+    color: '#0F172A',
     fontWeight: '700',
+  },
+  listContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
   listModeContent: {
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xxl * 2,
-    gap: spacing.sm,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xxl,
   },
   listCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: radius.sm,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.md,
+    padding: spacing.md,
+    marginBottom: spacing.xs + 2,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: spacing.xs,
+    borderColor: colors.border,
   },
   listCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: spacing.xs,
   },
   listNumberGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.xs,
   },
   listSoNumber: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  listTypePill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.xs,
-  },
-  listTypePillText: {
-    fontSize: 10,
-    fontWeight: '700',
+    ...typography.bodyBold,
+    color: colors.text,
+    fontWeight: '800',
   },
   listCardMiddle: {
     flexDirection: 'row',
@@ -763,271 +814,221 @@ const styles = StyleSheet.create({
   },
   listCustomerCol: {
     flex: 1,
-    marginRight: 10,
+    paddingRight: spacing.sm,
   },
   listCustomerText: {
     ...typography.bodyBold,
-    fontSize: 13,
-    color: '#0F172A',
-    marginBottom: 2,
+    color: colors.text,
   },
   listMetaText: {
     ...typography.caption,
-    fontSize: 11,
-    color: '#64748B',
+    color: colors.textMuted,
+    marginTop: 2,
   },
   listAmountCol: {
     alignItems: 'flex-end',
   },
   listAmountLabel: {
-    fontSize: 9,
+    ...typography.tiny,
+    color: colors.textMuted,
     textTransform: 'uppercase',
-    color: '#64748B',
-    fontWeight: '600',
   },
   listAmountValue: {
-    fontSize: 13,
+    ...typography.bodyBold,
+    color: colors.primary,
     fontWeight: '800',
-    color: '#2563EB',
   },
-  listActionsRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  listBtnEdit: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#93C5FD',
-    borderRadius: radius.xs,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  listBtnEditText: {
-    color: '#1D4ED8',
-    fontWeight: '700',
-    fontSize: 11,
-  },
-  listBtnSendApproval: {
-    flex: 1,
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    borderRadius: radius.xs,
-    paddingVertical: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  listBtnSendApprovalText: {
-    color: '#B45309',
-    fontWeight: '700',
-    fontSize: 11,
-  },
-  listBtnApprove: {
-    flex: 1,
-    backgroundColor: '#DCFCE7',
-    borderWidth: 1,
-    borderColor: '#86EFAC',
-    borderRadius: radius.xs,
-    paddingVertical: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  listBtnApproveText: {
-    color: '#15803D',
-    fontWeight: '700',
-    fontSize: 11,
-  },
-  soNumberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  typePill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: radius.xs,
-  },
-  typePillText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  listContent: {
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
     padding: spacing.md,
-    paddingBottom: spacing.xxl * 2,
-  },
-  orderCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm + 2,
+    marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
-  cardHeader: {
+  cardTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.sm,
+    alignItems: 'center',
+    marginBottom: spacing.xs,
   },
-  titleCol: {
-    flex: 1,
-    marginRight: spacing.sm,
+  poNumberBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
-  soNumber: {
-    ...typography.bodyBold,
-    color: '#0F172A',
-    fontSize: 15,
+  poNumberText: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '700',
   },
-  customerName: {
-    ...typography.caption,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  stateBadge: {
+  typePill: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: radius.pill,
   },
-  stateBadgeText: {
-    ...typography.captionBold,
-    fontSize: 11,
+  typePillText: {
+    ...typography.tiny,
+    fontWeight: '700',
+  },
+  cardBody: {
+    marginVertical: spacing.xs,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  infoIcon: {
+    fontSize: 14,
+    marginRight: spacing.xs,
+  },
+  vendorText: {
+    ...typography.bodyBold,
+    color: colors.text,
+    flex: 1,
+  },
+  divisionText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    flex: 1,
   },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    paddingTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: '#F8FAFC',
+    borderTopColor: colors.surfaceSubtle,
+    paddingTop: spacing.xs,
   },
-  metaCol: {
+  dateBox: {
     flex: 1,
   },
-  dateText: {
+  dateLabel: {
     ...typography.tiny,
-    color: '#64748B',
+    color: colors.textMuted,
   },
-  salespersonText: {
+  dateSubLabel: {
     ...typography.tiny,
-    color: '#64748B',
-    marginTop: 2,
+    color: colors.primary,
+    fontWeight: '600',
   },
-  amountCol: {
+  totalBox: {
     alignItems: 'flex-end',
   },
-  amountLabel: {
-    fontSize: 11,
-    color: '#94A3B8',
+  totalLabel: {
+    ...typography.tiny,
+    color: colors.textMuted,
     textTransform: 'uppercase',
   },
-  amountText: {
+  totalAmountText: {
     ...typography.bodyBold,
-    color: '#2563EB',
-    fontSize: 16,
+    color: colors.text,
     fontWeight: '800',
   },
-  cardActionsRow: {
-    flexDirection: 'row',
-    gap: spacing.xs + 2,
+  actionRow: {
     marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.surfaceSubtle,
   },
-  cardBtnEdit: {
+  btnSendApproval: {
+    backgroundColor: colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+  },
+  btnSendApprovalText: {
+    color: colors.textInverted,
+    ...typography.captionBold,
+  },
+  btnApprove: {
+    backgroundColor: '#16A34A',
+    paddingVertical: 8,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+  },
+  btnApproveText: {
+    color: '#FFFFFF',
+    ...typography.captionBold,
+  },
+  approvedButtonGroup: {
+    gap: spacing.xs,
+  },
+  btnBill: {
     backgroundColor: '#EFF6FF',
     borderWidth: 1,
     borderColor: '#93C5FD',
     borderRadius: radius.xs,
     paddingVertical: 7,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  cardBtnEditText: {
+  btnBillText: {
     color: '#1D4ED8',
-    fontWeight: '700',
-    fontSize: 12,
+    ...typography.captionBold,
   },
-  cardBtnSendApproval: {
-    flex: 1,
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FCD34D',
+  btnReceive: {
+    backgroundColor: '#16A34A',
     borderRadius: radius.xs,
     paddingVertical: 7,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  cardBtnSendApprovalText: {
-    color: '#B45309',
-    fontWeight: '700',
-    fontSize: 12,
+  btnReceiveLocked: {
+    backgroundColor: '#E2E8F0',
   },
-  cardBtnApprove: {
-    flex: 1,
+  btnReceiveText: {
+    color: '#FFFFFF',
+    ...typography.captionBold,
+  },
+  btnReceiveTextLocked: {
+    color: '#64748B',
+  },
+  receiptDoneTag: {
     backgroundColor: '#DCFCE7',
     borderWidth: 1,
     borderColor: '#86EFAC',
     borderRadius: radius.xs,
-    paddingVertical: 7,
+    paddingVertical: 6,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    justifyContent: 'center',
   },
-  cardBtnApproveText: {
+  receiptDoneTagText: {
     color: '#15803D',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  cardBtnBill: {
-    backgroundColor: '#E0F2FE',
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    borderRadius: radius.xs,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    marginTop: spacing.xs,
-    flex: 1,
-  },
-  cardBtnBillText: {
-    color: '#0369A1',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
-  centerBox: {
+  centerContainer: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.xl,
+    alignItems: 'center',
   },
   loadingText: {
-    ...typography.caption,
-    color: '#64748B',
     marginTop: spacing.sm,
+    ...typography.body,
+    color: colors.textMuted,
   },
-  emptyBox: {
+  emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: spacing.xxl,
   },
   emptyIcon: {
-    fontSize: 44,
+    fontSize: 40,
     marginBottom: spacing.sm,
   },
   emptyTitle: {
     ...typography.h3,
-    color: '#0F172A',
-    fontWeight: '700',
+    color: colors.text,
+    marginBottom: spacing.xs,
   },
-  emptySub: {
+  emptySubtitle: {
     ...typography.caption,
-    color: '#64748B',
-    marginTop: 4,
+    color: colors.textMuted,
     textAlign: 'center',
+    maxWidth: 260,
   },
 });

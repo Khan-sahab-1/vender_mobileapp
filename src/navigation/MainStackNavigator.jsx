@@ -101,7 +101,7 @@ export default function MainStackNavigator() {
       <Stack.Screen
         name="SalesOrdersList"
         component={SalesOrdersListScreen}
-        options={{ title: 'Sales Orders (SO)' }}
+        options={{ title: 'Sales Orders' }}
       />
       <Stack.Screen
         name="SalesOrderForm"

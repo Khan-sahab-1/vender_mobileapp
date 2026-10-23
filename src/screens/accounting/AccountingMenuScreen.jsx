@@ -10,8 +10,8 @@ const OPERATIONS_MENU = [
   {
     key: 'customer-invoices',
     icon: '📄',
-    title: 'Customer Invoices (Bills)',
-    subtitle: 'Manage client invoices, payments & receivable ledger',
+    title: 'Customer Bills',
+    subtitle: 'Manage client bills, payments & receivable ledger',
     screen: navigationScreen.CUSTOMER_INVOICES,
   },
   {

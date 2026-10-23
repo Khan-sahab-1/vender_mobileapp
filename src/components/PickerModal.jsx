@@ -73,6 +73,19 @@ export default function PickerModal({
         });
         records = fallback.data ?? [];
       }
+
+      // If relation is customers or vendors and no records found, fallback to all partners
+      if (records.length === 0 && (relation === 'customers' || relation === 'vendors')) {
+        try {
+          const partnerApi = createCrudApi('/partners');
+          const fallbackRes = await partnerApi.list({
+            page: 1,
+            limit: 100,
+            search: search || undefined,
+          });
+          records = fallbackRes.data ?? [];
+        } catch (_) {}
+      }
       if (params?.excludeId) {
         records = records.filter(r => r.id !== params.excludeId);
       }

@@ -1,6 +1,5 @@
 import React, { useLayoutEffect, useState, useMemo, useEffect } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   ScrollView,
   StyleSheet,
@@ -19,33 +18,72 @@ import { navigationScreen } from '../../navigation/navigationScreen/navigationSc
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { formatDate } from '../../utils/dateUtils';
 
+function getTodayString() {
+  const d = new Date();
+  return d.toISOString().split('T')[0];
+}
+
+function getDefaultDeliveryDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return d.toISOString().split('T')[0];
+}
+
+function parseSafeDate(dateStr) {
+  if (!dateStr) return new Date();
+  if (dateStr instanceof Date) return dateStr;
+  const parts = String(dateStr).split('T')[0].split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return new Date(y, m, d);
+    }
+  }
+  const fallback = new Date(dateStr);
+  return isNaN(fallback.getTime()) ? new Date() : fallback;
+}
+
+function formatCustomerAddress(c) {
+  if (!c) return 'No address provided';
+  if (typeof c.address === 'string' && c.address) return c.address;
+  const streetPart = [c.street, c.street2].filter(Boolean).join(', ');
+  const cityPart = [c.city, c.state, c.zip].filter(Boolean).join(' ');
+  const parts = [streetPart, cityPart, c.country].filter(Boolean).join('\n');
+  return parts || 'No address provided';
+}
+
+function formatWarehouseAddress(w) {
+  if (!w) return 'No warehouse address';
+  const parts = [w.address, w.city, w.state, w.country].filter(Boolean).join(', ');
+  return parts || 'No warehouse address';
+}
+
 const ORDER_TYPES = [
-  { key: 'adhoc', label: 'Adhoc Order', icon: '⚡' },
-  { key: 'normal', label: 'Normal / Direct', icon: '📦' },
-  { key: 'arc', label: 'ARC', icon: '📝' },
-  { key: 'open_order', label: 'Open Order', icon: '🔄' },
-  { key: 'scheduled', label: 'Scheduled', icon: '🗓️' },
+  { key: 'adhoc', label: 'Adhoc', desc: 'Direct order without prior requisition (Direct Bill flow)' },
+  { key: 'normal', label: 'Direct', desc: 'Order based on standard quotation requisition' },
+  { key: 'arc', label: 'ARC', desc: 'Annual Rate Contract order' },
+  { key: 'open_order', label: 'Open Order', desc: 'Continuous open order blanket agreement' },
+  { key: 'scheduled', label: 'Scheduled', desc: 'Periodic scheduled dispatch delivery' },
+];
+
+const CURRENCIES = [
+  { value: 'INR', label: 'INR (₹) - Indian Rupee' },
+  { value: 'USD', label: 'USD ($) - US Dollar' },
+  { value: 'EUR', label: 'EUR (€) - Euro' },
+  { value: 'GBP', label: 'GBP (£) - British Pound' },
 ];
 
 export default function SalesOrderFormScreen({ navigation, route }) {
   const initialOrder = route?.params?.order;
-  const editOrderId = route?.params?.orderId || route?.params?.id || initialOrder?.id;
-  const isEditMode = Boolean(editOrderId);
+  const initialOrderId = route?.params?.orderId || route?.params?.id || initialOrder?.id;
 
-  const [orderInfo, setOrderInfo] = useState(initialOrder || null);
-  const [loadingOrder, setLoadingOrder] = useState(
-    Boolean(isEditMode && (!initialOrder || !Array.isArray(initialOrder.lines) || initialOrder.lines.length === 0)),
-  );
+  const [currentOrder, setCurrentOrder] = useState(initialOrder || null);
+  const isEditing = Boolean(initialOrderId || currentOrder?.id);
 
-  // Header State
-  const [orderType, setOrderType] = useState(
-    initialOrder?.type || initialOrder?.orderType || 'adhoc',
-  );
-  const [division, setDivision] = useState(
-    initialOrder?.division
-      ? { value: initialOrder.division.id, label: initialOrder.division.name }
-      : null,
-  );
+  // Form Fields
+  const [orderType, setOrderType] = useState(initialOrder?.type || initialOrder?.orderType || 'adhoc');
   const [customer, setCustomer] = useState(
     initialOrder?.customerRecord || initialOrder?.customer
       ? {
@@ -57,73 +95,87 @@ export default function SalesOrderFormScreen({ navigation, route }) {
             typeof initialOrder.customer === 'string'
               ? initialOrder.customer
               : initialOrder.customer?.name || initialOrder.customerRecord?.name || 'Customer',
+          address: formatCustomerAddress(
+            initialOrder.customerRecord ||
+            (typeof initialOrder.customer === 'object' ? initialOrder.customer : null),
+          ),
           record:
             initialOrder.customerRecord ||
             (typeof initialOrder.customer === 'object' ? initialOrder.customer : null),
         }
       : null,
   );
-  const [deliveryAddress, setDeliveryAddress] = useState(
-    initialOrder?.deliveryAddress || initialOrder?.shippingAddress || '',
+
+  const [warehouse, setWarehouse] = useState(
+    initialOrder?.warehouse
+      ? {
+          value: initialOrder.warehouse.id,
+          label: initialOrder.warehouse.name,
+          address: formatWarehouseAddress(initialOrder.warehouse),
+          record: initialOrder.warehouse,
+        }
+      : null,
+  );
+
+  const [division, setDivision] = useState(
+    initialOrder?.division
+      ? {
+          value: initialOrder.division.id,
+          label: initialOrder.division.code
+            ? `${initialOrder.division.name} (${initialOrder.division.code})`
+            : initialOrder.division.name,
+          record: initialOrder.division,
+        }
+      : null,
+  );
+
+  const [currency, setCurrency] = useState(initialOrder?.currency || 'INR');
+  const [orderDate, setOrderDate] = useState(
+    initialOrder?.orderDate || initialOrder?.date
+      ? String(initialOrder.orderDate || initialOrder.date).slice(0, 10)
+      : getTodayString(),
+  );
+  const [deliveryDate, setDeliveryDate] = useState(
+    initialOrder?.deliveryDate
+      ? String(initialOrder.deliveryDate).slice(0, 10)
+      : getDefaultDeliveryDate(),
+  );
+  const [clientPoDate, setClientPoDate] = useState(
+    initialOrder?.clientPoDate ? String(initialOrder.clientPoDate).slice(0, 10) : '',
   );
   const [poRefNo, setPoRefNo] = useState(
     initialOrder?.poRefNo || initialOrder?.clientRef || '',
   );
-  const [clientPoDate, setClientPoDate] = useState(
-    initialOrder?.clientPoDate ? new Date(initialOrder.clientPoDate) : null,
-  );
-  const [orderDate, setOrderDate] = useState(
-    initialOrder?.orderDate || initialOrder?.date
-      ? new Date(initialOrder.orderDate || initialOrder.date)
-      : new Date(),
+  const [deliveryAddress, setDeliveryAddress] = useState(
+    initialOrder?.deliveryAddress || initialOrder?.shippingAddress || '',
   );
   const [deliveryDays, setDeliveryDays] = useState(
     initialOrder?.deliveryDays !== undefined && initialOrder?.deliveryDays !== null
       ? String(initialOrder.deliveryDays)
       : '7',
   );
-  const [warehouse, setWarehouse] = useState(
-    initialOrder?.warehouse
-      ? { value: initialOrder.warehouse.id, label: initialOrder.warehouse.name }
-      : null,
-  );
-  const [pricelist, setPricelist] = useState(
-    initialOrder?.pricelist
-      ? { value: initialOrder.pricelist.id, label: initialOrder.pricelist.name }
-      : null,
-  );
-  const [paymentTerm, setPaymentTerm] = useState(
-    initialOrder?.paymentTerm
-      ? { value: initialOrder.paymentTerm.id, label: initialOrder.paymentTerm.name }
-      : null,
-  );
-  const [transporter, setTransporter] = useState(
-    initialOrder?.transporter
-      ? { value: initialOrder.transporter.id, label: initialOrder.transporter.name }
-      : null,
-  );
-  const [transporterName, setTransporterName] = useState(
-    initialOrder?.transporterName || '',
-  );
   const [notes, setNotes] = useState(initialOrder?.note || initialOrder?.notes || '');
 
-  // Line items state
+  // Lines
   const [lines, setLines] = useState(
-    Array.isArray(initialOrder?.lines) && initialOrder.lines.length > 0
-      ? initialOrder.lines.map((l, idx) => ({
-          id: l.id || `line-${idx}-${Date.now()}`,
-          productId: l.productId || l.product?.id,
-          productName: l.productName || l.product?.name || l.description || 'Product',
-          quantity: Number(l.quantity || 1),
-          unitPrice: Number(l.unitPrice || 0),
-          discount: Number(l.discount || 0),
-          taxId: l.taxId || l.tax?.id || null,
-          taxRate: l.tax ? (Number(l.tax.amount) || 0) / 100 : 0,
-          taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
-        }))
+    initialOrder?.lines && initialOrder.lines.length > 0
+      ? initialOrder.lines.map((l, idx) => {
+          const rate = l.tax ? (Number(l.tax.amount) || 0) / 100 : 0;
+          return {
+            id: l.id || `line-${idx}`,
+            productId: l.productId || l.product?.id,
+            productName: l.productName || l.product?.name || l.description || 'Sales Item',
+            quantity: Number(l.quantity || 1),
+            unitPrice: Number(l.unitPrice || 0),
+            discount: Number(l.discount || 0),
+            taxId: l.taxId || l.tax?.id || null,
+            taxRate: rate,
+            taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
+          };
+        })
       : [
           {
-            id: `line-0-${Date.now()}`,
+            id: 'line-0',
             productId: null,
             productName: '',
             quantity: 1,
@@ -136,107 +188,7 @@ export default function SalesOrderFormScreen({ navigation, route }) {
         ],
   );
 
-  // Populate helper for loading existing order
-  const populateFields = orderData => {
-    if (!orderData) return;
-    if (orderData.type || orderData.orderType) {
-      setOrderType(orderData.type || orderData.orderType);
-    }
-    if (orderData.division) {
-      setDivision({ value: orderData.division.id, label: orderData.division.name });
-    }
-    if (orderData.customer || orderData.customerRecord) {
-      const custLabel =
-        typeof orderData.customer === 'string'
-          ? orderData.customer
-          : orderData.customer?.name || orderData.customerRecord?.name;
-      const custId =
-        orderData.customerId ||
-        orderData.customerRecord?.id ||
-        (typeof orderData.customer === 'object' ? orderData.customer?.id : null);
-      const custRec =
-        orderData.customerRecord ||
-        (typeof orderData.customer === 'object' ? orderData.customer : null);
-      setCustomer({
-        value: custId,
-        label: custLabel || 'Customer',
-        record: custRec,
-      });
-    }
-    if (orderData.deliveryAddress || orderData.shippingAddress) {
-      setDeliveryAddress(orderData.deliveryAddress || orderData.shippingAddress || '');
-    }
-    if (orderData.poRefNo || orderData.clientRef) {
-      setPoRefNo(orderData.poRefNo || orderData.clientRef || '');
-    }
-    if (orderData.clientPoDate) {
-      setClientPoDate(new Date(orderData.clientPoDate));
-    }
-    if (orderData.orderDate || orderData.date) {
-      setOrderDate(new Date(orderData.orderDate || orderData.date));
-    }
-    if (orderData.deliveryDays !== undefined && orderData.deliveryDays !== null) {
-      setDeliveryDays(String(orderData.deliveryDays));
-    }
-    if (orderData.warehouse) {
-      setWarehouse({ value: orderData.warehouse.id, label: orderData.warehouse.name });
-    }
-    if (orderData.pricelist) {
-      setPricelist({ value: orderData.pricelist.id, label: orderData.pricelist.name });
-    }
-    if (orderData.paymentTerm) {
-      setPaymentTerm({ value: orderData.paymentTerm.id, label: orderData.paymentTerm.name });
-    }
-    if (orderData.transporter) {
-      setTransporter({ value: orderData.transporter.id, label: orderData.transporter.name });
-    }
-    if (orderData.transporterName) {
-      setTransporterName(orderData.transporterName);
-    }
-    if (orderData.note || orderData.notes) {
-      setNotes(orderData.note || orderData.notes);
-    }
-    if (Array.isArray(orderData.lines) && orderData.lines.length > 0) {
-      setLines(
-        orderData.lines.map((l, idx) => ({
-          id: l.id || `line-${idx}-${Date.now()}`,
-          productId: l.productId || l.product?.id,
-          productName: l.productName || l.product?.name || l.description || 'Product',
-          quantity: Number(l.quantity || 1),
-          unitPrice: Number(l.unitPrice || 0),
-          discount: Number(l.discount || 0),
-          taxId: l.taxId || l.tax?.id || null,
-          taxRate: l.tax ? (Number(l.tax.amount) || 0) / 100 : 0,
-          taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
-        })),
-      );
-    }
-  };
-
-  // Fetch full order if in edit mode
-  useEffect(() => {
-    if (!editOrderId) return;
-    let isMounted = true;
-    (async () => {
-      try {
-        setLoadingOrder(true);
-        const data = await salesApi.getOrderDetail(editOrderId);
-        if (isMounted && data) {
-          setOrderInfo(data);
-          populateFields(data);
-        }
-      } catch (err) {
-        console.warn('Failed to load order for editing:', err);
-      } finally {
-        if (isMounted) setLoadingOrder(false);
-      }
-    })();
-    return () => {
-      isMounted = false;
-    };
-  }, [editOrderId]);
-
-  // Pickers and Modals state
+  // Modals & Pickers
   const [pickerModal, setPickerModal] = useState({
     visible: false,
     title: '',
@@ -244,186 +196,132 @@ export default function SalesOrderFormScreen({ navigation, route }) {
     options: null,
     field: null,
     lineId: null,
+    params: null,
   });
 
-  const [datePickerState, setDatePickerState] = useState({
-    visible: false,
-    field: null, // 'orderDate' | 'clientPoDate'
-  });
+  const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
+  const [activeDateField, setActiveDateField] = useState('orderDate');
 
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Fetch full order if ID provided
+  useEffect(() => {
+    if (!initialOrderId) return;
+    salesApi
+      .getOrderDetail(initialOrderId)
+      .then(res => {
+        if (!res) return;
+        setCurrentOrder(res);
+        if (res.type || res.orderType) setOrderType(res.type || res.orderType);
+        if (res.customer || res.customerRecord) {
+          const cust = res.customerRecord || (typeof res.customer === 'object' ? res.customer : null);
+          setCustomer({
+            value: res.customerId || cust?.id,
+            label: typeof res.customer === 'string' ? res.customer : cust?.name || 'Customer',
+            address: formatCustomerAddress(cust),
+            record: cust,
+          });
+        }
+        if (res.warehouse) {
+          setWarehouse({
+            value: res.warehouse.id,
+            label: res.warehouse.name,
+            address: formatWarehouseAddress(res.warehouse),
+            record: res.warehouse,
+          });
+        }
+        if (res.division) {
+          setDivision({
+            value: res.division.id,
+            label: res.division.code ? `${res.division.name} (${res.division.code})` : res.division.name,
+            record: res.division,
+          });
+        }
+        if (res.orderDate || res.date) {
+          setOrderDate(String(res.orderDate || res.date).slice(0, 10));
+        }
+        if (res.deliveryDate) {
+          setDeliveryDate(String(res.deliveryDate).slice(0, 10));
+        }
+        if (res.clientPoDate) {
+          setClientPoDate(String(res.clientPoDate).slice(0, 10));
+        }
+        if (res.poRefNo || res.clientRef) {
+          setPoRefNo(res.poRefNo || res.clientRef);
+        }
+        if (res.deliveryAddress || res.shippingAddress) {
+          setDeliveryAddress(res.deliveryAddress || res.shippingAddress);
+        }
+        if (res.deliveryDays !== undefined && res.deliveryDays !== null) {
+          setDeliveryDays(String(res.deliveryDays));
+        }
+        if (res.note || res.notes) {
+          setNotes(res.note || res.notes);
+        }
+        if (Array.isArray(res.lines) && res.lines.length > 0) {
+          setLines(
+            res.lines.map((l, idx) => {
+              const rate = l.tax ? (Number(l.tax.amount) || 0) / 100 : 0;
+              return {
+                id: l.id || `line-${idx}`,
+                productId: l.productId || l.product?.id,
+                productName: l.productName || l.product?.name || l.description || 'Sales Item',
+                quantity: Number(l.quantity || 1),
+                unitPrice: Number(l.unitPrice || 0),
+                discount: Number(l.discount || 0),
+                taxId: l.taxId || l.tax?.id || null,
+                taxRate: rate,
+                taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
+              };
+            }),
+          );
+        }
+      })
+      .catch(err => console.warn('Failed to fetch sales order:', err));
+  }, [initialOrderId]);
 
   useLayoutEffect(() => {
-    const orderTitle =
-      orderInfo?.soNumber ||
-      orderInfo?.name ||
-      initialOrder?.soNumber ||
-      initialOrder?.name ||
-      '';
     navigation.setOptions({
-      title: isEditMode
-        ? `Edit SO: ${orderTitle}`
-        : 'Create Sale Order',
+      title: isEditing
+        ? currentOrder?.soNumber || currentOrder?.name || 'Sales Order'
+        : 'New Sales Order',
     });
-  }, [navigation, isEditMode, orderInfo, initialOrder]);
+  }, [navigation, isEditing, currentOrder]);
 
-  // Expected Delivery Date calculation
-  const calculatedDeliveryDate = useMemo(() => {
-    const days = parseInt(deliveryDays, 10);
-    if (isNaN(days) || days <= 0) return orderDate;
-    const d = new Date(orderDate);
-    d.setDate(d.getDate() + days);
-    return d;
-  }, [orderDate, deliveryDays]);
-
-  // Financial Calculations
-  const calculations = useMemo(() => {
-    let untaxedTotal = 0;
+  // Calculations
+  const totals = useMemo(() => {
+    let untaxed = 0;
     let discountTotal = 0;
     let taxTotal = 0;
 
-    const computedLines = lines.map(line => {
-      const qty = Number(line.quantity) || 0;
-      const price = Number(line.unitPrice) || 0;
-      const discPct = Number(line.discount) || 0;
-      const rate = Number(line.taxRate) || 0;
-
+    lines.forEach(l => {
+      const qty = Number(l.quantity) || 0;
+      const price = Number(l.unitPrice) || 0;
       const base = qty * price;
-      const discAmt = base * (discPct / 100);
-      const taxable = Math.max(0, base - discAmt);
-      const taxAmt = taxable * rate;
-      const total = taxable + taxAmt;
+      const disc = base * ((Number(l.discount) || 0) / 100);
+      const sub = base - disc;
+      const tx = sub * (Number(l.taxRate) || 0);
 
-      untaxedTotal += taxable;
-      discountTotal += discAmt;
-      taxTotal += taxAmt;
-
-      return {
-        ...line,
-        discAmt,
-        taxable,
-        taxAmt,
-        total,
-      };
+      untaxed += sub;
+      discountTotal += disc;
+      taxTotal += tx;
     });
 
-    const grandTotal = untaxedTotal + taxTotal;
-
     return {
-      computedLines,
-      untaxedTotal: Math.round(untaxedTotal * 100) / 100,
-      discountTotal: Math.round(discountTotal * 100) / 100,
-      taxTotal: Math.round(taxTotal * 100) / 100,
-      grandTotal: Math.round(grandTotal * 100) / 100,
+      untaxed,
+      discount: discountTotal,
+      tax: taxTotal,
+      total: untaxed + taxTotal,
     };
   }, [lines]);
 
-  // Handle Customer Selection & Auto Delivery Address
-  const handleSelectCustomer = item => {
-    setCustomer(item);
-    const rec = item.record;
-    if (rec) {
-      const parts = [
-        rec.street,
-        rec.street2,
-        rec.city,
-        rec.state,
-        rec.zip,
-        rec.country,
-      ].filter(Boolean);
-      const autoAddress = parts.join(', ');
-      setDeliveryAddress(autoAddress || rec.name || '');
-
-      // Auto select customer default payment term if available
-      if (rec.paymentTerm && !paymentTerm) {
-        setPaymentTerm({
-          value: rec.paymentTerm.id,
-          label: rec.paymentTerm.name,
-        });
-      }
-      // Auto select default warehouse if available
-      if (rec.warehouse && !warehouse) {
-        setWarehouse({
-          value: rec.warehouse.id,
-          label: rec.warehouse.name,
-        });
-      }
-    }
-  };
-
-  // Unified Picker Select Handler
-  const handlePickerSelect = item => {
-    const { field, lineId } = pickerModal;
-    if (field === 'division') {
-      setDivision(item);
-    } else if (field === 'customer') {
-      handleSelectCustomer(item);
-    } else if (field === 'warehouse') {
-      setWarehouse(item);
-    } else if (field === 'pricelist') {
-      setPricelist(item);
-    } else if (field === 'paymentTerm') {
-      setPaymentTerm(item);
-    } else if (field === 'transporter') {
-      setTransporter(item);
-      setTransporterName(item.label);
-    } else if (field === 'lineProduct') {
-      const rec = item.record;
-      const salesPrice = Number(rec?.salesPrice || rec?.costPrice || 0);
-
-      // Check if product has default tax
-      let defaultTaxId = null;
-      let defaultTaxRate = 0;
-      let defaultTaxName = null;
-      if (Array.isArray(rec?.salesTaxes) && rec.salesTaxes.length > 0) {
-        const t = rec.salesTaxes[0];
-        defaultTaxId = t.id;
-        defaultTaxRate = (Number(t.amount) || 0) / 100;
-        defaultTaxName = t.name || `${t.amount}%`;
-      }
-
-      setLines(prev =>
-        prev.map(l =>
-          l.id === lineId
-            ? {
-                ...l,
-                productId: item.value,
-                productName: item.label,
-                unitPrice: salesPrice,
-                taxId: defaultTaxId || l.taxId,
-                taxRate: defaultTaxRate || l.taxRate,
-                taxName: defaultTaxName || l.taxName,
-              }
-            : l,
-        ),
-      );
-    } else if (field === 'lineTax') {
-      const rec = item.record;
-      const amount = Number(rec?.amount) || 0;
-      const rate =
-        rec?.amountType === 'percent' || !rec?.amountType ? amount / 100 : 0;
-      setLines(prev =>
-        prev.map(l =>
-          l.id === lineId
-            ? {
-                ...l,
-                taxId: item.value,
-                taxRate: rate,
-                taxName: rec?.name || `${amount}%`,
-              }
-            : l,
-        ),
-      );
-    }
-    setPickerModal(p => ({ ...p, visible: false }));
-  };
-
-  // Add new order line
+  // Line Handlers
   const handleAddLine = () => {
     setLines(prev => [
       ...prev,
       {
-        id: `line-${prev.length}-${Date.now()}`,
+        id: `line-${Date.now()}`,
         productId: null,
         productName: '',
         quantity: 1,
@@ -436,1052 +334,1435 @@ export default function SalesOrderFormScreen({ navigation, route }) {
     ]);
   };
 
-  // Remove line
-  const handleRemoveLine = lineId => {
-    if (lines.length <= 1) {
-      Alert.alert('Notice', 'A sale order must contain at least one line item.');
+  const handleRemoveLine = id => {
+    setLines(prev => prev.filter(l => l.id !== id));
+  };
+
+  const handleUpdateLineQty = (id, delta) => {
+    setLines(prev =>
+      prev.map(l => {
+        if (l.id !== id) return l;
+        const newQty = Math.max(1, (Number(l.quantity) || 1) + delta);
+        return { ...l, quantity: newQty };
+      }),
+    );
+  };
+
+  const handleUpdateLinePrice = (id, priceStr) => {
+    setLines(prev =>
+      prev.map(l => {
+        if (l.id !== id) return l;
+        return { ...l, unitPrice: priceStr };
+      }),
+    );
+  };
+
+  const handleUpdateLineDiscount = (id, discStr) => {
+    setLines(prev =>
+      prev.map(l => {
+        if (l.id !== id) return l;
+        return { ...l, discount: discStr };
+      }),
+    );
+  };
+
+  const handleClearLineTax = id => {
+    setLines(prev =>
+      prev.map(l => {
+        if (l.id !== id) return l;
+        return { ...l, taxId: null, taxRate: 0, taxName: null };
+      }),
+    );
+  };
+
+  // Date Pickers
+  const showDatePicker = field => {
+    setActiveDateField(field);
+    setDatePickerVisibility(true);
+  };
+
+  const hideDatePicker = () => {
+    setDatePickerVisibility(false);
+  };
+
+  const handleConfirmDate = date => {
+    const dStr = date.toISOString().split('T')[0];
+    if (activeDateField === 'orderDate') setOrderDate(dStr);
+    else if (activeDateField === 'deliveryDate') setDeliveryDate(dStr);
+    else if (activeDateField === 'clientPoDate') setClientPoDate(dStr);
+    hideDatePicker();
+  };
+
+  // Picker Select Handler
+  const handlePickerSelect = item => {
+    if (!item) {
+      setPickerModal(p => ({ ...p, visible: false }));
       return;
     }
-    setLines(prev => prev.filter(l => l.id !== lineId));
-  };
 
-  // Update line field
-  const handleLineChange = (lineId, key, value) => {
-    setLines(prev =>
-      prev.map(l => (l.id === lineId ? { ...l, [key]: value } : l)),
-    );
-  };
+    const rec = item.record || item;
+    const val = item.value !== undefined ? item.value : (rec?.id !== undefined ? rec.id : item?.id);
+    const lbl = item.label || rec?.name || item?.name || '';
 
-  // Clear line tax
-  const handleClearTax = lineId => {
-    setLines(prev =>
-      prev.map(l =>
-        l.id === lineId
-          ? { ...l, taxId: null, taxRate: 0, taxName: null }
-          : l,
-      ),
-    );
-  };
-
-  // Validation
-  const validateForm = () => {
-    if (!division) {
-      Alert.alert('Validation Error', 'Please select a Division.');
-      return false;
-    }
-    if (!customer) {
-      Alert.alert('Validation Error', 'Please select a Customer.');
-      return false;
-    }
-    if (!warehouse) {
-      Alert.alert('Validation Error', 'Please select a Warehouse.');
-      return false;
-    }
-    const hasValidLine = lines.some(
-      l => l.productId && Number(l.quantity) > 0,
-    );
-    if (!hasValidLine) {
-      Alert.alert(
-        'Validation Error',
-        'Please add at least one product with quantity > 0.',
-      );
-      return false;
-    }
-    return true;
-  };
-
-  // Submit Handler
-  const handleSubmit = async (sendForApprovalImmediately = false) => {
-    if (!validateForm()) return;
-
-    setSaving(true);
-    try {
-      const payload = {
-        divisionId: division.value,
-        customerId: customer.value,
-        deliveryAddress: deliveryAddress.trim() || undefined,
-        poRefNo: poRefNo.trim() || undefined,
-        clientPoDate: clientPoDate ? clientPoDate.toISOString() : undefined,
-        orderDate: orderDate.toISOString(),
-        warehouseId: warehouse.value,
-        pricelistId: pricelist?.value || undefined,
-        paymentTermId: paymentTerm?.value || undefined,
-        orderType,
-        transporterId: transporter?.value || undefined,
-        transporterName: transporterName.trim() || undefined,
-        deliveryDays: parseInt(deliveryDays, 10) || 0,
-        deliveryDate: calculatedDeliveryDate.toISOString(),
-        note: notes.trim() || undefined,
-        lines: lines
-          .filter(l => l.productId)
-          .map(l => ({
-            productId: l.productId,
-            description: l.productName,
-            quantity: Number(l.quantity) || 1,
-            unitPrice: Number(l.unitPrice) || 0,
-            discount: Number(l.discount) || 0,
-            taxId: l.taxId || undefined,
-          })),
-      };
-
-      if (isEditMode) {
-        const res = await salesApi.updateOrder(editOrderId, payload);
-
-        if (sendForApprovalImmediately) {
-          await salesApi.sendForApproval(editOrderId);
-        }
-
-        Alert.alert(
-          'Updated Successfully',
-          `Sales Order ${res?.name || orderInfo?.soNumber || orderInfo?.name || ''} updated successfully ${
-            sendForApprovalImmediately
-              ? 'and sent for management approval!'
-              : '!'
-          }`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                navigation.goBack();
-              },
-            },
-          ],
-        );
+    if (pickerModal.field === 'customer') {
+      if (!val && !lbl) {
+        setCustomer(null);
       } else {
-        const res = await salesApi.createOrder(payload);
-
-        if (sendForApprovalImmediately && res?.id) {
-          await salesApi.sendForApproval(res.id);
+        const addr = formatCustomerAddress(rec);
+        setCustomer({
+          value: val,
+          label: lbl,
+          address: addr,
+          record: rec,
+        });
+        if (!deliveryAddress || deliveryAddress === 'No address provided') {
+          setDeliveryAddress(addr);
         }
+        if (rec?.currency) {
+          setCurrency(rec.currency);
+        }
+      }
+    } else if (pickerModal.field === 'warehouse') {
+      if (!val && !lbl) {
+        setWarehouse(null);
+      } else {
+        setWarehouse({
+          value: val,
+          label: lbl,
+          address: formatWarehouseAddress(rec),
+          record: rec,
+        });
+      }
+    } else if (pickerModal.field === 'division') {
+      if (!val && !lbl) {
+        setDivision(null);
+      } else {
+        const divLabel = rec?.code ? `${rec.name || lbl} (${rec.code})` : (lbl || rec?.name);
+        setDivision({
+          value: val,
+          label: divLabel,
+          record: rec,
+        });
+      }
+    } else if (pickerModal.field === 'currency') {
+      setCurrency(val || lbl || 'INR');
+    } else if (pickerModal.field === 'product') {
+      const price = Number(rec?.salesPrice ?? rec?.listPrice ?? rec?.costPrice ?? 0);
+      const taxObj = rec?.taxes && rec.taxes.length > 0 ? rec.taxes[0] : null;
+      const taxRate = taxObj ? (Number(taxObj.amount) || 0) / 100 : 0;
+      const taxName = taxObj ? (taxObj.name || `${taxObj.amount}%`) : null;
 
-        Alert.alert(
-          'Success',
-          `Sales Order ${res?.name || ''} created successfully ${
-            sendForApprovalImmediately
-              ? 'and sent for management approval!'
-              : 'as Draft Quotation!'
-          }`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                navigation.navigate(navigationScreen.SALES_ORDERS_LIST);
-              },
-            },
-          ],
-        );
+      setLines(prev =>
+        prev.map(l => {
+          if (l.id !== pickerModal.lineId) return l;
+          return {
+            ...l,
+            productId: val,
+            productName: lbl,
+            unitPrice: price > 0 ? price : (l.unitPrice || 0),
+            taxId: taxObj ? taxObj.id : l.taxId,
+            taxRate: taxObj ? taxRate : l.taxRate,
+            taxName: taxObj ? taxName : l.taxName,
+          };
+        }),
+      );
+    } else if (pickerModal.field === 'lineTax') {
+      const amount = Number(rec?.amount) || 0;
+      const rate = rec?.amountType === 'percent' || !rec?.amountType ? amount / 100 : 0;
+      const taxLabel = rec?.name || (amount ? `${amount}%` : null);
+
+      setLines(prev =>
+        prev.map(l => {
+          if (l.id !== pickerModal.lineId) return l;
+          return {
+            ...l,
+            taxId: val,
+            taxRate: rate,
+            taxName: taxLabel,
+          };
+        }),
+      );
+    }
+    setPickerModal(p => ({ ...p, visible: false }));
+  };
+
+  // Save / Update Handler
+  const handleSave = async (sendImmediately = false) => {
+    if (!customer?.value) {
+      Alert.alert('Validation Error', 'Please select a Customer.');
+      return;
+    }
+    if (!warehouse?.value) {
+      Alert.alert('Validation Error', 'Please select a Warehouse.');
+      return;
+    }
+    if (!division?.value) {
+      Alert.alert('Validation Error', 'Please select a Division.');
+      return;
+    }
+    const hasEmptyProduct = lines.some(l => !l.productId && !l.productName);
+    if (hasEmptyProduct) {
+      Alert.alert('Validation Error', 'Please select a Product for each order line.');
+      return;
+    }
+
+    const payload = {
+      orderType,
+      customerId: customer.value,
+      warehouseId: warehouse.value,
+      divisionId: division.value,
+      currency,
+      deliveryAddress: deliveryAddress.trim() || undefined,
+      poRefNo: poRefNo.trim() || undefined,
+      clientPoDate: clientPoDate ? new Date(clientPoDate).toISOString() : undefined,
+      orderDate: new Date(orderDate).toISOString(),
+      deliveryDate: new Date(deliveryDate).toISOString(),
+      deliveryDays: parseInt(deliveryDays, 10) || 7,
+      note: notes.trim() || undefined,
+      lines: lines.map(l => ({
+        productId: l.productId,
+        description: l.productName,
+        quantity: Number(l.quantity) || 1,
+        unitPrice: Number(l.unitPrice) || 0,
+        discount: Number(l.discount) || 0,
+        taxId: l.taxId || undefined,
+      })),
+    };
+
+    setSubmitting(true);
+    try {
+      if (currentOrder?.id) {
+        const updated = await salesApi.updateOrder(currentOrder.id, payload);
+        if (sendImmediately) {
+          await salesApi.sendForApproval(currentOrder.id);
+          const fullOrder = await salesApi.getOrderDetail(currentOrder.id);
+          setCurrentOrder(fullOrder);
+          Alert.alert('Success', `Sales Order ${fullOrder.soNumber || fullOrder.name} updated and sent for approval!`);
+        } else {
+          setCurrentOrder(updated);
+          Alert.alert('Draft Saved', 'Sales Order draft has been updated successfully.');
+        }
+      } else {
+        const created = await salesApi.createOrder(payload);
+        if (sendImmediately && created?.id) {
+          await salesApi.sendForApproval(created.id);
+          const fullOrder = await salesApi.getOrderDetail(created.id);
+          setCurrentOrder(fullOrder);
+          Alert.alert('Success', `Sales Order ${fullOrder.soNumber || fullOrder.name} created and sent for approval!`);
+        } else {
+          setCurrentOrder(created);
+          Alert.alert('Draft Created', 'Sales Order created as Draft Quotation.');
+        }
       }
     } catch (err) {
-      Alert.alert(
-        isEditMode ? 'Update Failed' : 'Creation Failed',
-        err?.response?.data?.message || err?.message || 'Failed to save sales order',
-      );
+      Alert.alert('Error', err?.response?.data?.message || err?.message || 'Failed to save Sales Order');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   };
 
-  if (loadingOrder) {
-    return (
-      <ScreenContainer>
-        <View style={styles.centerLoadingBox}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.centerLoadingText}>
-            Loading Sales Order Details...
-          </Text>
-        </View>
-      </ScreenContainer>
-    );
-  }
+  // Send for Approval
+  const handleSendForApproval = async () => {
+    if (!currentOrder?.id) return;
+    setActionLoading(true);
+    try {
+      await salesApi.sendForApproval(currentOrder.id);
+      const updated = await salesApi.getOrderDetail(currentOrder.id);
+      setCurrentOrder(updated);
+      Alert.alert('Sent for Approval!', `Sales Order ${updated.soNumber || updated.name} submitted for management approval.`);
+    } catch (err) {
+      Alert.alert('Error', err?.response?.data?.message || 'Failed to send for approval');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Admin Approve Order -> Direct Customer Bill & Delivery Order
+  const handleApproveOrder = async () => {
+    if (!currentOrder?.id) return;
+    setActionLoading(true);
+    try {
+      const res = await salesApi.approveOrder(currentOrder.id);
+      setCurrentOrder(res);
+      const bill = res?.customerInvoice;
+      const picking = res?.stockPicking;
+      Alert.alert(
+        'SO Approved!',
+        `Sales Order ${res.soNumber || res.name} approved!\n\n🧾 Customer Bill: ${bill?.invoiceNumber || 'Draft Bill'}\n📦 Delivery Order: ${picking?.name || 'Created'}\n\nInventory dispatch & Accounting entries are ready!`,
+        [
+          { text: 'Stay Here', style: 'cancel' },
+          {
+            text: 'Open Customer Bill',
+            onPress: () => {
+              if (bill) {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: bill,
+                  invoiceId: bill.id,
+                });
+              } else {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+              }
+            },
+          },
+        ],
+      );
+    } catch (err) {
+      Alert.alert('Error', err?.response?.data?.message || 'Failed to approve Sales Order');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Deliver Goods (Deduct Stock)
+  const handleDeliverGoods = async () => {
+    if (!currentOrder?.id) return;
+    const billState = currentOrder.customerInvoice?.state?.toLowerCase();
+    const isBillValidated =
+      billState === 'open' || billState === 'posted' || billState === 'paid';
+
+    if (!isBillValidated) {
+      Alert.alert(
+        'Invoice Validation Required',
+        `Stock delivery cannot be validated yet!\n\nThe Customer Bill (${currentOrder.customerInvoice?.invoiceNumber || 'Draft'}) must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Open Customer Bill',
+            onPress: () => {
+              if (currentOrder.customerInvoice) {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: currentOrder.customerInvoice,
+                  invoiceId: currentOrder.customerInvoice.id,
+                });
+              } else {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const updated = await salesApi.deliverGoods(currentOrder.id);
+      setCurrentOrder(updated);
+      Alert.alert(
+        'Stock Updated!',
+        `Goods delivered for ${updated.soNumber || updated.name}!\n\nDelivery ${updated?.stockPicking?.name || ''} validated and deducted from Warehouse on-hand stock.`,
+      );
+    } catch (err) {
+      Alert.alert('Validation Error', err?.response?.data?.message || 'Failed to deliver goods');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const currentState =
+    currentOrder?.state === 'sale' ? 'approved' : currentOrder?.state || 'draft';
+  const billState = currentOrder?.customerInvoice?.state?.toLowerCase();
+  const isBillValidated =
+    billState === 'open' || billState === 'posted' || billState === 'paid';
 
   return (
     <ScreenContainer>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled">
-        {/* Top Header Card */}
+        {/* State Banner / Stepper (Exact PO Form Stepper) */}
+        {isEditing && (
+          <View style={[styles.stepperCard, shadows.sm]}>
+            <View style={styles.stepperTop}>
+              <Text style={styles.stepperTitle}>
+                {currentOrder?.soNumber || currentOrder?.name || 'Sales Order'}
+              </Text>
+              <StateBadge state={currentState} />
+            </View>
+
+            <View style={styles.stepTrack}>
+              <View style={[styles.stepDot, styles.stepActive]}>
+                <Text style={styles.stepDotNum}>1</Text>
+              </View>
+              <Text style={styles.stepLabel}>Draft</Text>
+
+              <View
+                style={[
+                  styles.stepLine,
+                  (currentState === 'to_approve' ||
+                    currentState === 'sent_for_approval' ||
+                    currentState === 'approved') &&
+                    styles.stepLineActive,
+                ]}
+              />
+
+              <View
+                style={[
+                  styles.stepDot,
+                  (currentState === 'to_approve' ||
+                    currentState === 'sent_for_approval' ||
+                    currentState === 'approved') &&
+                    styles.stepActive,
+                ]}>
+                <Text style={styles.stepDotNum}>2</Text>
+              </View>
+              <Text style={styles.stepLabel}>To Approve</Text>
+
+              <View
+                style={[
+                  styles.stepLine,
+                  currentState === 'approved' && styles.stepLineActive,
+                ]}
+              />
+
+              <View
+                style={[
+                  styles.stepDot,
+                  currentState === 'approved' && styles.stepActiveSuccess,
+                ]}>
+                <Text style={styles.stepDotNum}>✓</Text>
+              </View>
+              <Text style={styles.stepLabel}>Approved</Text>
+            </View>
+
+            {/* Direct Bill Linked Button */}
+            {currentOrder?.customerInvoice && (
+              <TouchableOpacity
+                style={styles.linkedBillBtn}
+                onPress={() =>
+                  navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                    invoice: currentOrder.customerInvoice,
+                    invoiceId: currentOrder.customerInvoice.id,
+                  })
+                }>
+                <Text style={styles.linkedBillBtnText}>
+                  🧾 View Generated Customer Bill: {currentOrder.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Linked Delivery Order & Goods Dispatch */}
+            {currentOrder?.stockPicking && (
+              <View style={styles.linkedReceiptBox}>
+                <View style={styles.linkedReceiptHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.linkedReceiptTitle}>
+                      📦 Outgoing Delivery: {currentOrder.stockPicking.name}
+                    </Text>
+                    <Text style={styles.linkedReceiptSub}>
+                      Origin: {currentOrder.warehouse?.name || 'Warehouse'} ➔ Customer
+                    </Text>
+                  </View>
+                  <StateBadge state={currentOrder.stockPicking.state} />
+                </View>
+
+                {currentOrder.stockPicking.state === 'done' ? (
+                  <View style={styles.receiptDoneBanner}>
+                    <Text style={styles.receiptDoneBannerText}>
+                      ✓ Goods Delivered & Warehouse Stock Updated
+                    </Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[
+                      styles.btnReceiveGoods,
+                      !isBillValidated && styles.btnReceiveGoodsLocked,
+                    ]}
+                    activeOpacity={0.8}
+                    disabled={actionLoading}
+                    onPress={handleDeliverGoods}>
+                    <Text
+                      style={[
+                        styles.btnReceiveGoodsText,
+                        !isBillValidated && styles.btnReceiveGoodsTextLocked,
+                      ]}>
+                      {actionLoading
+                        ? 'Delivering...'
+                        : isBillValidated
+                        ? '📦 Deliver Goods (Update Warehouse Stock) ✓'
+                        : '🔒 Validate Bill First to Deliver Stock'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* 1. ORDER TYPE SELECTOR */}
         <View style={[styles.card, shadows.sm]}>
-          <Text style={styles.cardHeaderTitle}>SALE ORDER TYPE</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.typeRow}>
+          <Text style={styles.cardSectionTitle}>SALE ORDER TYPE</Text>
+          <View style={styles.typeSegmentRow}>
             {ORDER_TYPES.map(t => {
-              const isActive = orderType === t.key;
+              const active = orderType === t.key;
               return (
                 <TouchableOpacity
                   key={t.key}
-                  style={[styles.typePill, isActive && styles.typePillActive]}
+                  style={[styles.typeBtn, active && styles.typeBtnActive]}
                   onPress={() => setOrderType(t.key)}
-                  activeOpacity={0.7}>
-                  <Text style={styles.typeIcon}>{t.icon}</Text>
-                  <Text
-                    style={[
-                      styles.typePillText,
-                      isActive && styles.typePillTextActive,
-                    ]}>
+                  activeOpacity={0.8}>
+                  <Text style={[styles.typeText, active && styles.typeTextActive]}>
                     {t.label}
                   </Text>
                 </TouchableOpacity>
               );
             })}
-          </ScrollView>
+          </View>
+          <Text style={styles.typeHelpText}>
+            💡 {ORDER_TYPES.find(t => t.key === orderType)?.desc}
+          </Text>
         </View>
 
-        {/* Master Details Card */}
+        {/* 2. CORE DETAILS: Customer, Warehouse, Division */}
         <View style={[styles.card, shadows.sm]}>
-          <Text style={styles.cardHeaderTitle}>CUSTOMER & GENERAL DETAILS</Text>
+          <Text style={styles.cardSectionTitle}>SALE PARTNERS & LOCATIONS</Text>
 
-          {/* Division & Warehouse */}
-          <View style={styles.twoColRow}>
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>
-                Division <Text style={styles.req}>*</Text>
-              </Text>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setPickerModal({
-                    visible: true,
-                    title: 'Select Division',
-                    relation: 'divisions',
-                    field: 'division',
-                  })
-                }>
-                <Text
-                  style={
-                    division
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }
-                  numberOfLines={1}>
-                  🏭 {division?.label || 'Select Division'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>
-                Warehouse <Text style={styles.req}>*</Text>
-              </Text>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setPickerModal({
-                    visible: true,
-                    title: 'Select Warehouse',
-                    relation: 'warehouses',
-                    field: 'warehouse',
-                  })
-                }>
-                <Text
-                  style={
-                    warehouse
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }
-                  numberOfLines={1}>
-                  📍 {warehouse?.label || 'Select Warehouse'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Customer Selection */}
-          <Text style={styles.inputLabel}>
-            Customer <Text style={styles.req}>*</Text>
-          </Text>
+          {/* Customer */}
+          <Text style={styles.inputLabel}>Customer *</Text>
           <TouchableOpacity
             style={styles.pickerTrigger}
             onPress={() =>
               setPickerModal({
                 visible: true,
                 title: 'Select Customer',
-                relation: 'partners',
+                relation: 'customers',
                 field: 'customer',
               })
             }>
-            <Text
-              style={
-                customer
-                  ? styles.pickerValueText
-                  : styles.pickerPlaceholderText
-              }
-              numberOfLines={1}>
-              🏢 {customer?.label || 'Search & Select Customer...'}
+            <Text style={customer?.label ? styles.pickerTriggerText : styles.pickerPlaceholder}>
+              {customer?.label || 'Select Customer...'}
             </Text>
+            <Text style={styles.triggerChevron}>⌄</Text>
           </TouchableOpacity>
 
-          {/* Auto Delivery Address (Editable) */}
-          <Text style={styles.inputLabel}>
-            Delivery Address (Auto-filled)
+          {customer?.address ? (
+            <View style={styles.addressBox}>
+              <Text style={styles.addressBoxTitle}>Customer Address:</Text>
+              <Text style={styles.addressBoxContent}>{customer.address}</Text>
+            </View>
+          ) : null}
+
+          {/* Deliver From Warehouse */}
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>
+            Warehouse (Dispatch Location) *
+          </Text>
+          <TouchableOpacity
+            style={styles.pickerTrigger}
+            onPress={() =>
+              setPickerModal({
+                visible: true,
+                title: 'Select Warehouse',
+                relation: 'warehouses',
+                field: 'warehouse',
+              })
+            }>
+            <Text style={warehouse?.label ? styles.pickerTriggerText : styles.pickerPlaceholder}>
+              {warehouse?.label || 'Select Warehouse...'}
+            </Text>
+            <Text style={styles.triggerChevron}>⌄</Text>
+          </TouchableOpacity>
+          {warehouse?.address ? (
+            <View style={styles.addressBox}>
+              <Text style={styles.addressBoxTitle}>Warehouse Address:</Text>
+              <Text style={styles.addressBoxContent}>{warehouse.address}</Text>
+            </View>
+          ) : null}
+
+          {/* Division */}
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Division *</Text>
+          <TouchableOpacity
+            style={styles.pickerTrigger}
+            onPress={() =>
+              setPickerModal({
+                visible: true,
+                title: 'Select Division',
+                relation: 'divisions',
+                field: 'division',
+              })
+            }>
+            <Text style={division?.label ? styles.pickerTriggerText : styles.pickerPlaceholder}>
+              {division?.label || 'Select Division...'}
+            </Text>
+            <Text style={styles.triggerChevron}>⌄</Text>
+          </TouchableOpacity>
+
+          {/* Delivery Address (Destination) */}
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>
+            Delivery Address (Destination)
           </Text>
           <TextInput
-            style={[styles.textInput, styles.multilineInput]}
+            style={[styles.textInput, { minHeight: 44 }]}
+            multiline
+            placeholder="Client delivery destination address..."
+            placeholderTextColor={colors.textMuted}
             value={deliveryAddress}
             onChangeText={setDeliveryAddress}
-            placeholder="Delivery address will be auto-populated here..."
-            placeholderTextColor="#94A3B8"
-            multiline
-            numberOfLines={2}
           />
 
-          {/* PO Ref No & Client PO Date */}
-          <View style={styles.twoColRow}>
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>PO Ref No (Client)</Text>
+          {/* Client PO Ref & Date */}
+          <View style={[styles.rowTwo, { marginTop: spacing.sm }]}>
+            <View style={styles.colHalf}>
+              <Text style={styles.inputLabel}>Client PO Ref #</Text>
               <TextInput
                 style={styles.textInput}
+                placeholder="PO/Ref Number"
+                placeholderTextColor={colors.textMuted}
                 value={poRefNo}
                 onChangeText={setPoRefNo}
-                placeholder="e.g. PO/2026/XYZ"
-                placeholderTextColor="#94A3B8"
               />
             </View>
 
-            <View style={styles.col}>
+            <TouchableOpacity
+              style={styles.colHalf}
+              onPress={() => showDatePicker('clientPoDate')}
+              activeOpacity={0.7}>
               <Text style={styles.inputLabel}>Client PO Date</Text>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setDatePickerState({ visible: true, field: 'clientPoDate' })
-                }>
-                <Text
-                  style={
-                    clientPoDate
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }>
-                  📅 {clientPoDate ? formatDate(clientPoDate) : 'DD/MM/YYYY'}
+              <View style={styles.pickerTrigger}>
+                <Text style={styles.pickerTriggerText}>
+                  {clientPoDate ? formatDate(clientPoDate) : 'Select Date'}
                 </Text>
-              </TouchableOpacity>
-            </View>
+                <Text style={{ fontSize: 14 }}>📅</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* 3. DATES & CURRENCY */}
+        <View style={[styles.card, shadows.sm]}>
+          <Text style={styles.cardSectionTitle}>ORDER SCHEDULE & INVOICING</Text>
+
+          <View style={styles.rowTwo}>
+            <TouchableOpacity
+              style={styles.colHalf}
+              onPress={() => showDatePicker('orderDate')}
+              activeOpacity={0.7}>
+              <Text style={styles.inputLabel}>Order Date</Text>
+              <View style={styles.pickerTrigger}>
+                <Text style={styles.pickerTriggerText}>{formatDate(orderDate) || 'Select Date'}</Text>
+                <Text style={{ fontSize: 14 }}>📅</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.colHalf}
+              onPress={() => showDatePicker('deliveryDate')}
+              activeOpacity={0.7}>
+              <Text style={styles.inputLabel}>Delivery Date</Text>
+              <View style={styles.pickerTrigger}>
+                <Text style={styles.pickerTriggerText}>{formatDate(deliveryDate) || 'Select Date'}</Text>
+                <Text style={{ fontSize: 14 }}>📅</Text>
+              </View>
+            </TouchableOpacity>
           </View>
 
-          {/* Today / Order Date & Delivery Days */}
-          <View style={styles.twoColRow}>
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>Today Date (Order Date)</Text>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setDatePickerState({ visible: true, field: 'orderDate' })
-                }>
-                <Text style={styles.pickerValueText}>
-                  📅 {formatDate(orderDate)}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.col}>
+          <View style={[styles.rowTwo, { marginTop: spacing.sm }]}>
+            <View style={styles.colHalf}>
               <Text style={styles.inputLabel}>Delivery Days</Text>
               <TextInput
                 style={styles.textInput}
+                keyboardType="numeric"
                 value={deliveryDays}
                 onChangeText={setDeliveryDays}
-                keyboardType="numeric"
-                placeholder="e.g. 7"
-                placeholderTextColor="#94A3B8"
+                placeholder="7"
               />
             </View>
-          </View>
 
-          {/* Calculated Expected Delivery Date Banner */}
-          <View style={styles.deliveryDateBanner}>
-            <Text style={styles.deliveryDateBannerText}>
-              🗓️ Expected Delivery Date:{' '}
-              <Text style={{ fontWeight: '800', color: colors.primary }}>
-                {formatDate(calculatedDeliveryDate)}
-              </Text>{' '}
-              ({deliveryDays || 0} days from order)
-            </Text>
-          </View>
-
-          {/* Pricelist & Payment Term */}
-          <View style={styles.twoColRow}>
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>Pricelist</Text>
+            <View style={styles.colHalf}>
+              <Text style={styles.inputLabel}>Currency</Text>
               <TouchableOpacity
                 style={styles.pickerTrigger}
                 onPress={() =>
                   setPickerModal({
                     visible: true,
-                    title: 'Select Pricelist',
-                    relation: 'pricelists',
-                    field: 'pricelist',
+                    title: 'Select Currency',
+                    options: CURRENCIES,
+                    field: 'currency',
                   })
                 }>
-                <Text
-                  style={
-                    pricelist
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }
-                  numberOfLines={1}>
-                  🏷️ {pricelist?.label || 'Default Pricelist'}
-                </Text>
+                <Text style={styles.pickerTriggerText}>{currency}</Text>
+                <Text style={styles.triggerChevron}>⌄</Text>
               </TouchableOpacity>
-            </View>
-
-            <View style={styles.col}>
-              <Text style={styles.inputLabel}>Payment Term</Text>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setPickerModal({
-                    visible: true,
-                    title: 'Select Payment Term',
-                    relation: 'payment-terms',
-                    field: 'paymentTerm',
-                  })
-                }>
-                <Text
-                  style={
-                    paymentTerm
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }
-                  numberOfLines={1}>
-                  💳 {paymentTerm?.label || 'Immediate Payment'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Transporter */}
-          <Text style={styles.inputLabel}>Transporter / Shipping Carrier</Text>
-          <View style={styles.twoColRow}>
-            <View style={{ flex: 1, marginRight: spacing.xs }}>
-              <TouchableOpacity
-                style={styles.pickerTrigger}
-                onPress={() =>
-                  setPickerModal({
-                    visible: true,
-                    title: 'Select Transporter Partner',
-                    relation: 'partners',
-                    field: 'transporter',
-                  })
-                }>
-                <Text
-                  style={
-                    transporter
-                      ? styles.pickerValueText
-                      : styles.pickerPlaceholderText
-                  }
-                  numberOfLines={1}>
-                  🚚 {transporter?.label || 'Select Carrier...'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ flex: 1, marginLeft: spacing.xs }}>
-              <TextInput
-                style={styles.textInput}
-                value={transporterName}
-                onChangeText={setTransporterName}
-                placeholder="Or type transporter name..."
-                placeholderTextColor="#94A3B8"
-              />
             </View>
           </View>
         </View>
 
-        {/* Order Lines Card */}
+        {/* 4. PRODUCTS & ORDER LINES (Exact PO Form) */}
         <View style={[styles.card, shadows.sm]}>
-          <View style={styles.lineHeaderRow}>
-            <View>
-              <Text style={styles.cardHeaderTitle}>ORDER LINE ITEMS</Text>
-              <Text style={styles.cardHeaderSub}>
-                {lines.length} {lines.length === 1 ? 'item' : 'items'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.btnAddLine}
-              onPress={handleAddLine}
-              activeOpacity={0.7}>
-              <Text style={styles.btnAddLineText}>+ Add Product</Text>
+          <View style={styles.linesHeaderRow}>
+            <Text style={styles.cardSectionTitle}>ORDER PRODUCTS & QUANTITIES</Text>
+            <TouchableOpacity style={styles.addLineBtn} onPress={handleAddLine}>
+              <Text style={styles.addLineBtnText}>+ Add Item</Text>
             </TouchableOpacity>
           </View>
 
-          {calculations.computedLines.map((line, index) => (
-            <View key={line.id} style={styles.lineCard}>
-              <View style={styles.lineTopRow}>
-                <Text style={styles.lineIndexBadge}>#{index + 1}</Text>
-                <TouchableOpacity
-                  style={styles.lineProductSelector}
-                  onPress={() =>
-                    setPickerModal({
-                      visible: true,
-                      title: 'Select Product',
-                      relation: 'products',
-                      field: 'lineProduct',
-                      lineId: line.id,
-                    })
-                  }>
-                  <Text
-                    style={
-                      line.productName
-                        ? styles.lineProductName
-                        : styles.lineProductPlaceholder
-                    }
-                    numberOfLines={1}>
-                    📦 {line.productName || 'Select Product...'}
-                  </Text>
-                </TouchableOpacity>
+          {lines.map((l, index) => {
+            const lineSubtotal = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+            const lineDisc = lineSubtotal * ((Number(l.discount) || 0) / 100);
+            const lineTaxable = lineSubtotal - lineDisc;
+            const lineTaxAmount = lineTaxable * (Number(l.taxRate) || 0);
 
-                {lines.length > 1 && (
+            return (
+              <View key={l.id} style={styles.lineCard}>
+                <View style={styles.lineTop}>
+                  <Text style={styles.lineIndex}>#{index + 1}</Text>
                   <TouchableOpacity
-                    style={styles.btnDeleteLine}
-                    onPress={() => handleRemoveLine(line.id)}>
-                    <Text style={styles.btnDeleteLineText}>🗑️</Text>
+                    style={styles.productSelectTrigger}
+                    onPress={() =>
+                      setPickerModal({
+                        visible: true,
+                        title: 'Select Product from Catalog',
+                        relation: 'products',
+                        field: 'product',
+                        lineId: l.id,
+                      })
+                    }>
+                    <Text
+                      style={
+                        l.productName
+                          ? styles.productSelectText
+                          : styles.productSelectPlaceholder
+                      }
+                      numberOfLines={1}>
+                      {l.productName || 'Select Product...'}
+                    </Text>
+                    <Text style={styles.triggerChevron}>⌄</Text>
                   </TouchableOpacity>
-                )}
-              </View>
 
-              {/* Line Inputs Grid */}
-              <View style={styles.lineInputsGrid}>
-                {/* Quantity */}
-                <View style={styles.lineInputBox}>
-                  <Text style={styles.lineInputLabel}>Qty</Text>
-                  <TextInput
-                    style={styles.lineTextInput}
-                    value={String(line.quantity)}
-                    onChangeText={val =>
-                      handleLineChange(line.id, 'quantity', val)
-                    }
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Unit Price */}
-                <View style={styles.lineInputBox}>
-                  <Text style={styles.lineInputLabel}>Unit Price (₹)</Text>
-                  <TextInput
-                    style={styles.lineTextInput}
-                    value={String(line.unitPrice)}
-                    onChangeText={val =>
-                      handleLineChange(line.id, 'unitPrice', val)
-                    }
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Discount % */}
-                <View style={styles.lineInputBox}>
-                  <Text style={styles.lineInputLabel}>Disc %</Text>
-                  <TextInput
-                    style={styles.lineTextInput}
-                    value={String(line.discount)}
-                    onChangeText={val =>
-                      handleLineChange(line.id, 'discount', val)
-                    }
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Taxes Selector */}
-                <View style={[styles.lineInputBox, { flex: 1.4 }]}>
-                  <Text style={styles.lineInputLabel}>Taxes</Text>
-                  <View style={styles.taxPillWrap}>
+                  {lines.length > 1 && (
                     <TouchableOpacity
-                      style={styles.taxPill}
+                      onPress={() => handleRemoveLine(l.id)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                      <Text style={styles.deleteIcon}>✕</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={styles.lineControlsRow}>
+                  {/* Qty Stepper */}
+                  <View style={styles.qtyControl}>
+                    <Text style={styles.controlLabel}>Qty</Text>
+                    <View style={styles.stepperBox}>
+                      <TouchableOpacity
+                        style={styles.stepBtn}
+                        onPress={() => handleUpdateLineQty(l.id, -1)}>
+                        <Text style={styles.stepBtnText}>−</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.qtyVal}>{l.quantity}</Text>
+                      <TouchableOpacity
+                        style={styles.stepBtn}
+                        onPress={() => handleUpdateLineQty(l.id, 1)}>
+                        <Text style={styles.stepBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Unit Price Input */}
+                  <View style={styles.priceControl}>
+                    <Text style={styles.controlLabel}>Unit Price ({currency})</Text>
+                    <TextInput
+                      style={styles.priceInput}
+                      keyboardType="numeric"
+                      value={String(l.unitPrice)}
+                      onChangeText={val => handleUpdateLinePrice(l.id, val)}
+                    />
+                  </View>
+
+                  {/* Discount % Input */}
+                  <View style={styles.discountControl}>
+                    <Text style={styles.controlLabel}>Disc %</Text>
+                    <TextInput
+                      style={styles.priceInput}
+                      keyboardType="numeric"
+                      value={String(l.discount || 0)}
+                      onChangeText={val => handleUpdateLineDiscount(l.id, val)}
+                    />
+                  </View>
+
+                  {/* Subtotal */}
+                  <View style={styles.subtotalControl}>
+                    <Text style={styles.controlLabel}>Subtotal</Text>
+                    <Text style={styles.subtotalVal}>
+                      ₹{(lineTaxable + lineTaxAmount).toFixed(2)}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Tax Selector Row */}
+                <View style={styles.lineTaxRow}>
+                  <Text style={styles.controlLabel}>Tax</Text>
+                  {l.taxId ? (
+                    <View style={styles.selectedTaxBadge}>
+                      <TouchableOpacity
+                        style={styles.taxBadgeContent}
+                        onPress={() =>
+                          setPickerModal({
+                            visible: true,
+                            title: 'Select Tax',
+                            relation: 'taxes',
+                            field: 'lineTax',
+                            lineId: l.id,
+                            params: { typeTaxUse: 'sale' },
+                          })
+                        }>
+                        <Text style={styles.selectedTaxText}>
+                          🧾 {l.taxName} ({(Number(l.taxRate || 0) * 100).toFixed(0)}%)
+                        </Text>
+                        <Text style={styles.selectedTaxSub}>
+                          +{currency} {lineTaxAmount.toFixed(2)}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleClearLineTax(l.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={styles.clearTaxBtn}>
+                        <Text style={styles.clearTaxBtnText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.taxSelectBtn}
                       onPress={() =>
                         setPickerModal({
                           visible: true,
                           title: 'Select Tax',
                           relation: 'taxes',
                           field: 'lineTax',
-                          lineId: line.id,
+                          lineId: l.id,
+                          params: { typeTaxUse: 'sale' },
                         })
                       }>
-                      <Text style={styles.taxPillText} numberOfLines={1}>
-                        {line.taxName || 'None'}
-                      </Text>
+                      <Text style={styles.taxSelectBtnText}>+ Select Tax (None)</Text>
                     </TouchableOpacity>
-                    {line.taxId && (
-                      <TouchableOpacity
-                        style={styles.taxClearBtn}
-                        onPress={() => handleClearTax(line.id)}>
-                        <Text style={styles.taxClearText}>✕</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                  )}
                 </View>
               </View>
+            );
+          })}
 
-              {/* Line Subtotal Footer */}
-              <View style={styles.lineFooterRow}>
-                <Text style={styles.lineSubText}>
-                  Net: ₹{line.taxable.toFixed(2)} + Tax: ₹
-                  {line.taxAmt.toFixed(2)}
-                </Text>
-                <Text style={styles.lineTotalText}>
-                  Total: ₹{line.total.toFixed(2)}
+          {/* Grand Totals */}
+          <View style={styles.totalsBox}>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalRowLabel}>Untaxed Amount:</Text>
+              <Text style={styles.totalRowValue}>
+                {currency} {totals.untaxed.toFixed(2)}
+              </Text>
+            </View>
+            {totals.discount > 0 && (
+              <View style={styles.totalRow}>
+                <Text style={[styles.totalRowLabel, { color: '#059669' }]}>Total Discount:</Text>
+                <Text style={[styles.totalRowValue, { color: '#059669' }]}>
+                  -{currency} {totals.discount.toFixed(2)}
                 </Text>
               </View>
-            </View>
-          ))}
-        </View>
-
-        {/* Financial Summary Card */}
-        <View style={[styles.card, shadows.sm]}>
-          <Text style={styles.cardHeaderTitle}>FINANCIAL SUMMARY</Text>
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Untaxed Subtotal</Text>
-            <Text style={styles.summaryVal}>
-              ₹
-              {calculations.untaxedTotal.toLocaleString('en-IN', {
-                minimumFractionDigits: 2,
-              })}
-            </Text>
-          </View>
-
-          {calculations.discountTotal > 0 && (
-            <View style={styles.summaryRow}>
-              <Text style={[styles.summaryLabel, { color: '#059669' }]}>
-                Total Discount
-              </Text>
-              <Text style={[styles.summaryVal, { color: '#059669' }]}>
-                -₹
-                {calculations.discountTotal.toLocaleString('en-IN', {
-                  minimumFractionDigits: 2,
-                })}
+            )}
+            <View style={styles.totalRow}>
+              <Text style={styles.totalRowLabel}>Tax Amount (GST):</Text>
+              <Text style={styles.totalRowValue}>
+                {currency} {totals.tax.toFixed(2)}
               </Text>
             </View>
-          )}
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total Taxes (GST)</Text>
-            <Text style={styles.summaryVal}>
-              ₹
-              {calculations.taxTotal.toLocaleString('en-IN', {
-                minimumFractionDigits: 2,
-              })}
-            </Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.summaryRow}>
-            <Text style={styles.grandTotalLabel}>Grand Total</Text>
-            <Text style={styles.grandTotalVal}>
-              ₹
-              {calculations.grandTotal.toLocaleString('en-IN', {
-                minimumFractionDigits: 2,
-              })}
-            </Text>
+            <View style={[styles.totalRow, styles.totalRowGrand]}>
+              <Text style={styles.grandTotalLabel}>Total Amount:</Text>
+              <Text style={styles.grandTotalValue}>
+                {currency} {totals.total.toFixed(2)}
+              </Text>
+            </View>
           </View>
         </View>
 
-        {/* Notes */}
+        {/* 5. NOTES */}
         <View style={[styles.card, shadows.sm]}>
-          <Text style={styles.cardHeaderTitle}>ORDER NOTES & TERMS</Text>
+          <Text style={styles.cardSectionTitle}>TERMS & INTERNAL NOTES</Text>
           <TextInput
-            style={[styles.textInput, styles.multilineInput]}
+            style={styles.notesInput}
+            multiline
+            numberOfLines={3}
+            placeholder="Add payment terms, dispatch instructions, or customer notes..."
             value={notes}
             onChangeText={setNotes}
-            placeholder="Add payment terms, delivery notes, or special customer instructions..."
-            placeholderTextColor="#94A3B8"
-            multiline
-            numberOfLines={2}
           />
         </View>
 
-        {/* Action Buttons */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={styles.btnDraft}
-            onPress={() => handleSubmit(false)}
-            disabled={saving}
-            activeOpacity={0.8}>
-            <Text style={styles.btnDraftText}>
-              {saving
-                ? 'Saving...'
-                : isEditMode
-                ? '💾 Update Sale Order'
-                : '💾 Save as Draft'}
-            </Text>
-          </TouchableOpacity>
+        {/* ACTION BUTTONS (Exact PO Form Actions) */}
+        <View style={styles.footerActions}>
+          {!isEditing && (
+            <View style={{ gap: spacing.sm }}>
+              <Button
+                title="Create Sales Order"
+                loading={submitting}
+                onPress={() => handleSave(false)}
+              />
+              <Button
+                title="Save & Send for Approval →"
+                variant="outline"
+                loading={submitting}
+                onPress={() => handleSave(true)}
+              />
+            </View>
+          )}
 
-          <TouchableOpacity
-            style={styles.btnConfirm}
-            onPress={() => handleSubmit(true)}
-            disabled={saving}
-            activeOpacity={0.8}>
-            <Text style={styles.btnConfirmText}>
-              {saving
-                ? 'Processing...'
-                : isEditMode
-                ? '📤 Update & Send for Approval →'
-                : '📤 Save & Send for Approval →'}
-            </Text>
-          </TouchableOpacity>
+          {isEditing && currentState === 'draft' && (
+            <View style={{ gap: spacing.sm }}>
+              <Button
+                title="Send for Approval →"
+                loading={actionLoading}
+                onPress={handleSendForApproval}
+              />
+              <Button
+                title="Save Draft Changes"
+                variant="outline"
+                loading={submitting}
+                onPress={() => handleSave(false)}
+              />
+            </View>
+          )}
+
+          {isEditing && (currentState === 'to_approve' || currentState === 'sent_for_approval') && (
+            <View style={{ gap: spacing.sm }}>
+              <Button
+                title="Admin Approve (Generate Direct Bill) ✓"
+                variant="secondary"
+                loading={actionLoading}
+                onPress={handleApproveOrder}
+              />
+              <Button
+                title="Save Draft Changes"
+                variant="outline"
+                loading={submitting}
+                onPress={() => handleSave(false)}
+              />
+            </View>
+          )}
+
+          {isEditing && (currentState === 'approved' || currentState === 'sale') && (
+            <View style={styles.receiptDoneBanner}>
+              <Text style={styles.receiptDoneBannerText}>
+                ✓ Sale Order Approved & Confirmed
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 
-      {/* Relations Picker Modal */}
+      {/* Dynamic Master Data Picker Modal */}
       <PickerModal
         visible={pickerModal.visible}
         title={pickerModal.title}
         relation={pickerModal.relation}
         options={pickerModal.options}
-        onSelect={handlePickerSelect}
+        params={pickerModal.params}
         onClose={() => setPickerModal(p => ({ ...p, visible: false }))}
+        onSelect={handlePickerSelect}
       />
 
       {/* Date Picker Modal */}
       <DateTimePickerModal
-        isVisible={datePickerState.visible}
+        isVisible={isDatePickerVisible}
         mode="date"
-        date={
-          datePickerState.field === 'clientPoDate'
-            ? clientPoDate || new Date()
-            : orderDate
-        }
-        onConfirm={d => {
-          if (datePickerState.field === 'clientPoDate') {
-            setClientPoDate(d);
-          } else {
-            setOrderDate(d);
-          }
-          setDatePickerState({ visible: false, field: null });
-        }}
-        onCancel={() => setDatePickerState({ visible: false, field: null })}
+        date={parseSafeDate(
+          activeDateField === 'deliveryDate'
+            ? deliveryDate
+            : activeDateField === 'clientPoDate'
+            ? clientPoDate
+            : orderDate,
+        )}
+        onConfirm={handleConfirmDate}
+        onCancel={hideDatePicker}
       />
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContent: {
+  scroll: {
     padding: spacing.md,
     paddingBottom: spacing.xxl * 2,
     gap: spacing.md,
   },
-  card: {
-    backgroundColor: '#FFFFFF',
+  stepperCard: {
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
-  cardHeaderTitle: {
-    ...typography.captionBold,
-    color: '#475569',
-    letterSpacing: 0.8,
-    marginBottom: spacing.xs,
-    textTransform: 'uppercase',
+  stepperTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
   },
-  cardHeaderSub: {
-    ...typography.tiny,
-    color: '#94A3B8',
+  stepperTitle: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '800',
   },
-  typeRow: {
-    gap: spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  typePill: {
+  stepTrack: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  stepDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepActive: {
+    backgroundColor: colors.primary,
+  },
+  stepActiveSuccess: {
+    backgroundColor: '#16A34A',
+  },
+  stepDotNum: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepLabel: {
+    ...typography.tiny,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginLeft: 6,
+    marginRight: 8,
+  },
+  stepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: colors.border,
+    marginHorizontal: 4,
+  },
+  stepLineActive: {
+    backgroundColor: colors.primary,
+  },
+  linkedBillBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    borderRadius: radius.xs,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  linkedBillBtnText: {
+    color: '#1D4ED8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  linkedReceiptBox: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: radius.xs,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  linkedReceiptHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  linkedReceiptTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  linkedReceiptSub: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 2,
+  },
+  receiptDoneBanner: {
+    backgroundColor: '#DCFCE7',
+    paddingVertical: 8,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  receiptDoneBannerText: {
+    color: '#15803D',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  btnReceiveGoods: {
+    backgroundColor: '#16A34A',
+    paddingVertical: 9,
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  btnReceiveGoodsLocked: {
+    backgroundColor: '#E2E8F0',
+  },
+  btnReceiveGoodsText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  btnReceiveGoodsTextLocked: {
+    color: '#64748B',
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cardSectionTitle: {
+    ...typography.caption,
+    fontWeight: '800',
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  typeSegmentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  typeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceSubtle,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
-  typePillActive: {
+  typeBtnActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
-  typeIcon: {
-    fontSize: 13,
-  },
-  typePillText: {
-    ...typography.captionBold,
-    color: '#475569',
-  },
-  typePillTextActive: {
-    color: '#FFFFFF',
-  },
-  twoColRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  col: {
-    flex: 1,
-  },
-  inputLabel: {
-    ...typography.captionBold,
-    color: '#334155',
-    marginTop: spacing.sm,
-    marginBottom: 4,
-  },
-  req: {
-    color: '#EF4444',
-  },
-  pickerTrigger: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    justifyContent: 'center',
-  },
-  pickerValueText: {
-    ...typography.body,
-    fontSize: 13,
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  pickerPlaceholderText: {
-    ...typography.body,
-    fontSize: 13,
-    color: '#94A3B8',
-  },
-  textInput: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
-    color: '#0F172A',
-  },
-  multilineInput: {
-    minHeight: 52,
-    textAlignVertical: 'top',
-  },
-  deliveryDateBanner: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: radius.sm,
-    padding: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  deliveryDateBannerText: {
+  typeText: {
     fontSize: 12,
-    color: '#1E40AF',
-    fontWeight: '500',
+    fontWeight: '600',
+    color: colors.text,
   },
-  lineHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  btnAddLine: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  btnAddLineText: {
-    ...typography.captionBold,
-    color: colors.primary,
-  },
-  lineCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: radius.sm,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: spacing.sm,
-  },
-  lineTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: spacing.xs,
-  },
-  lineIndexBadge: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#64748B',
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  lineProductSelector: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.xs,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  lineProductName: {
-    fontSize: 13,
+  typeTextActive: {
+    color: colors.textInverted,
     fontWeight: '700',
-    color: '#0F172A',
   },
-  lineProductPlaceholder: {
-    fontSize: 13,
-    color: '#94A3B8',
-  },
-  btnDeleteLine: {
-    padding: 6,
-  },
-  btnDeleteLineText: {
-    fontSize: 16,
-  },
-  lineInputsGrid: {
-    flexDirection: 'row',
-    gap: 6,
+  typeHelpText: {
+    fontSize: 11,
+    color: colors.textMuted,
     marginTop: 4,
   },
-  lineInputBox: {
-    flex: 1,
-  },
-  lineInputLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  lineTextInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.xs,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    fontSize: 12,
-    color: '#0F172A',
-    fontWeight: '600',
-  },
-  taxPillWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  taxPill: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: radius.xs,
-    paddingHorizontal: 6,
-    paddingVertical: 5,
-  },
-  taxPillText: {
-    fontSize: 11,
-    color: '#334155',
-    fontWeight: '600',
-  },
-  taxClearBtn: {
-    paddingHorizontal: 4,
-  },
-  taxClearText: {
-    color: '#EF4444',
+  inputLabel: {
     fontSize: 12,
     fontWeight: '700',
+    color: colors.textSecondary,
+    marginBottom: 4,
   },
-  lineFooterRow: {
+  pickerTrigger: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 9,
+    minHeight: 40,
   },
-  lineSubText: {
-    fontSize: 11,
-    color: '#64748B',
-  },
-  lineTotalText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  summaryLabel: {
+  pickerTriggerText: {
     ...typography.body,
-    fontSize: 13,
-    color: '#64748B',
+    color: colors.text,
+    flex: 1,
   },
-  summaryVal: {
-    ...typography.bodyBold,
-    fontSize: 13,
-    color: '#0F172A',
+  pickerPlaceholder: {
+    ...typography.body,
+    color: colors.textMuted,
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
-    marginVertical: spacing.xs,
+  triggerChevron: {
+    fontSize: 14,
+    color: colors.textMuted,
+    marginLeft: 6,
   },
-  grandTotalLabel: {
-    ...typography.h3,
-    fontSize: 15,
-    color: '#0F172A',
-    fontWeight: '800',
+  addressBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: radius.xs,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  grandTotalVal: {
-    ...typography.h3,
-    fontSize: 17,
-    color: colors.primary,
-    fontWeight: '800',
+  addressBoxTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
   },
-  actionRow: {
+  addressBoxContent: {
+    fontSize: 12,
+    color: colors.text,
+    marginTop: 2,
+  },
+  rowTwo: {
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.xs,
   },
-  btnDraft: {
+  colHalf: {
     flex: 1,
-    backgroundColor: '#F1F5F9',
+  },
+  textInput: {
+    backgroundColor: colors.surfaceSubtle,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.border,
     borderRadius: radius.sm,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnDraftText: {
-    ...typography.captionBold,
-    color: '#475569',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 8,
     fontSize: 13,
+    color: colors.text,
   },
-  centerLoadingBox: {
-    flex: 1,
+  linesHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
+    marginBottom: spacing.sm,
   },
-  centerLoadingText: {
-    ...typography.caption,
-    color: '#64748B',
-    marginTop: spacing.sm,
-    fontSize: 14,
+  addLineBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: radius.xs,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
-  btnConfirm: {
-    flex: 1.2,
-    backgroundColor: colors.primary,
-    borderRadius: radius.sm,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnConfirmText: {
-    ...typography.captionBold,
-    color: '#FFFFFF',
-    fontSize: 13,
+  addLineBtnText: {
+    color: '#1D4ED8',
+    fontSize: 12,
     fontWeight: '700',
   },
+  lineCard: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  lineTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  lineIndex: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.textMuted,
+    width: 24,
+  },
+  productSelectTrigger: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xs,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  productSelectText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+    flex: 1,
+  },
+  productSelectPlaceholder: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  deleteIcon: {
+    fontSize: 14,
+    color: colors.danger,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    fontWeight: '800',
+  },
+  lineControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  qtyControl: {
+    width: 80,
+  },
+  stepperBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xs,
+    height: 34,
+  },
+  stepBtn: {
+    width: 24,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceSubtle,
+  },
+  stepBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  qtyVal: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  priceControl: {
+    flex: 1.2,
+  },
+  discountControl: {
+    width: 55,
+  },
+  controlLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textMuted,
+    marginBottom: 2,
+  },
+  priceInput: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xs,
+    paddingHorizontal: 6,
+    height: 34,
+    fontSize: 12,
+    color: colors.text,
+    textAlign: 'right',
+  },
+  subtotalControl: {
+    flex: 1,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  subtotalVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primary,
+    marginTop: 6,
+  },
+  lineTaxRow: {
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  selectedTaxBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: radius.xs,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 2,
+  },
+  taxBadgeContent: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  selectedTaxText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  selectedTaxSub: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  clearTaxBtn: {
+    marginLeft: 8,
+  },
+  clearTaxBtnText: {
+    fontSize: 11,
+    color: colors.danger,
+    fontWeight: '800',
+  },
+  taxSelectBtn: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xs,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  taxSelectBtnText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  totalsBox: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
+  },
+  totalRowLabel: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  totalRowValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  totalRowGrand: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 6,
+    marginTop: 4,
+  },
+  grandTotalLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  grandTotalValue: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  notesInput: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    fontSize: 12,
+    color: colors.text,
+    minHeight: 60,
+    textAlignVertical: 'top',
+  },
+  footerActions: {
+    marginTop: spacing.xs,
+  },
 });
-

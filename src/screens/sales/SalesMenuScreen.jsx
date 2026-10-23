@@ -10,14 +10,14 @@ const OPERATIONS_MENU = [
   {
     key: 'sales-orders',
     icon: '🛒',
-    title: 'Sales Orders (SO)',
+    title: 'Sales Orders',
     subtitle: 'Quotations & customer sales orders',
     screen: navigationScreen.SALES_ORDERS_LIST || 'SalesOrdersList',
   },
   {
     key: 'customer-invoices',
     icon: '🧾',
-    title: 'Customer Invoices (Bills)',
+    title: 'Customer Bills',
     subtitle: 'Client invoices, payments & balances',
     screen: navigationScreen.CUSTOMER_INVOICES,
   },
