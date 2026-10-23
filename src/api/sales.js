@@ -51,6 +51,11 @@ export const salesApi = {
     return data;
   },
 
+  createInvoice: async (id, payload = {}) => {
+    const { data } = await client.post(`/sales/orders/${id}/create-invoice`, payload);
+    return data;
+  },
+
   cancelOrder: async id => {
     const { data } = await client.post(`/sales/orders/${id}/cancel`);
     return data;

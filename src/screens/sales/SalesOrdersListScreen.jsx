@@ -176,26 +176,36 @@ export default function SalesOrdersListScreen() {
 
   // Workflow Action 3: Deliver Goods (Validate Delivery)
   const handleDeliverGoods = async order => {
-    const billState = order.customerInvoice?.state?.toLowerCase();
-    const isBillValidated =
-      billState === 'open' || billState === 'posted' || billState === 'paid';
+    const invoices =
+      order.customerInvoices && order.customerInvoices.length > 0
+        ? order.customerInvoices
+        : order.customerInvoice
+        ? [order.customerInvoice]
+        : [];
+    const isAnyBillValidated = invoices.some(inv => {
+      const s = (inv?.state || '').toLowerCase();
+      return s === 'open' || s === 'posted' || s === 'paid';
+    });
 
-    if (!isBillValidated) {
+    if (!isAnyBillValidated) {
       Alert.alert(
         'Invoice Validation Required',
-        `Stock delivery cannot be validated yet!\n\nThe Customer Bill (${order.customerInvoice?.invoiceNumber || 'Draft'}) must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
+        `Stock delivery cannot be validated yet!\n\nAt least one Customer Bill must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Open Customer Bill',
             onPress: () => {
-              if (order.customerInvoice) {
+              if (invoices.length === 1) {
                 navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                  invoice: order.customerInvoice,
-                  invoiceId: order.customerInvoice.id,
+                  invoice: invoices[0],
+                  invoiceId: invoices[0].id,
                 });
               } else {
-                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+                navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
+                  order,
+                  orderId: order.id,
+                });
               }
             },
           },
@@ -248,9 +258,17 @@ export default function SalesOrdersListScreen() {
     const isApproved = item.state === 'approved' || item.state === 'sale';
     const isDraft = item.state === 'draft';
 
-    const billState = item.customerInvoice?.state?.toLowerCase();
-    const isBillValidated =
-      billState === 'open' || billState === 'posted' || billState === 'paid';
+    const invoices =
+      item.customerInvoices && item.customerInvoices.length > 0
+        ? item.customerInvoices
+        : item.customerInvoice
+        ? [item.customerInvoice]
+        : [];
+    const invoiceCount = item.customerInvoiceCount || invoices.length;
+    const isAnyBillValidated = invoices.some(inv => {
+      const s = (inv?.state || '').toLowerCase();
+      return s === 'open' || s === 'posted' || s === 'paid';
+    });
 
     return (
       <TouchableOpacity
@@ -321,7 +339,21 @@ export default function SalesOrdersListScreen() {
 
           {isApproved && (
             <View style={styles.approvedButtonGroup}>
-              {item.customerInvoice && (
+              {invoiceCount > 1 ? (
+                <TouchableOpacity
+                  style={styles.btnBill}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
+                      order: item,
+                      orderId: item.id,
+                    })
+                  }>
+                  <Text style={styles.btnBillText}>
+                    🧾 View Bills ({invoiceCount}) ›
+                  </Text>
+                </TouchableOpacity>
+              ) : item.customerInvoice ? (
                 <TouchableOpacity
                   style={styles.btnBill}
                   activeOpacity={0.8}
@@ -335,7 +367,7 @@ export default function SalesOrdersListScreen() {
                     🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
                   </Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
 
               {item.stockPicking && (
                 item.stockPicking.state === 'done' ? (
@@ -348,7 +380,7 @@ export default function SalesOrdersListScreen() {
                   <TouchableOpacity
                     style={[
                       styles.btnReceive,
-                      !isBillValidated && styles.btnReceiveLocked,
+                      !isAnyBillValidated && styles.btnReceiveLocked,
                     ]}
                     activeOpacity={0.8}
                     disabled={isActionLoading}
@@ -356,11 +388,11 @@ export default function SalesOrdersListScreen() {
                     <Text
                       style={[
                         styles.btnReceiveText,
-                        !isBillValidated && styles.btnReceiveTextLocked,
+                        !isAnyBillValidated && styles.btnReceiveTextLocked,
                       ]}>
                       {isActionLoading
                         ? 'Delivering...'
-                        : isBillValidated
+                        : isAnyBillValidated
                         ? `📦 Deliver Goods (${item.stockPicking.name}) →`
                         : `🔒 Validate Bill First to Deliver Stock`}
                     </Text>
@@ -391,9 +423,17 @@ export default function SalesOrdersListScreen() {
     const isApproved = item.state === 'approved' || item.state === 'sale';
     const isDraft = item.state === 'draft';
 
-    const billState = item.customerInvoice?.state?.toLowerCase();
-    const isBillValidated =
-      billState === 'open' || billState === 'posted' || billState === 'paid';
+    const invoices =
+      item.customerInvoices && item.customerInvoices.length > 0
+        ? item.customerInvoices
+        : item.customerInvoice
+        ? [item.customerInvoice]
+        : [];
+    const invoiceCount = item.customerInvoiceCount || invoices.length;
+    const isAnyBillValidated = invoices.some(inv => {
+      const s = (inv?.state || '').toLowerCase();
+      return s === 'open' || s === 'posted' || s === 'paid';
+    });
 
     return (
       <TouchableOpacity
@@ -479,7 +519,21 @@ export default function SalesOrdersListScreen() {
 
           {isApproved && (
             <View style={styles.approvedButtonGroup}>
-              {item.customerInvoice && (
+              {invoiceCount > 1 ? (
+                <TouchableOpacity
+                  style={styles.btnBill}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    navigation.navigate(navigationScreen.SALES_ORDER_FORM, {
+                      order: item,
+                      orderId: item.id,
+                    })
+                  }>
+                  <Text style={styles.btnBillText}>
+                    🧾 View Bills ({invoiceCount}) ›
+                  </Text>
+                </TouchableOpacity>
+              ) : item.customerInvoice ? (
                 <TouchableOpacity
                   style={styles.btnBill}
                   activeOpacity={0.8}
@@ -493,7 +547,7 @@ export default function SalesOrdersListScreen() {
                     🧾 View Bill: {item.customerInvoice.invoiceNumber || 'Draft Bill'} ›
                   </Text>
                 </TouchableOpacity>
-              )}
+              ) : null}
 
               {item.stockPicking && (
                 item.stockPicking.state === 'done' ? (
@@ -506,7 +560,7 @@ export default function SalesOrdersListScreen() {
                   <TouchableOpacity
                     style={[
                       styles.btnReceive,
-                      !isBillValidated && styles.btnReceiveLocked,
+                      !isAnyBillValidated && styles.btnReceiveLocked,
                     ]}
                     activeOpacity={0.8}
                     disabled={isActionLoading}
@@ -514,11 +568,11 @@ export default function SalesOrdersListScreen() {
                     <Text
                       style={[
                         styles.btnReceiveText,
-                        !isBillValidated && styles.btnReceiveTextLocked,
+                        !isAnyBillValidated && styles.btnReceiveTextLocked,
                       ]}>
                       {isActionLoading
                         ? 'Delivering...'
-                        : isBillValidated
+                        : isAnyBillValidated
                         ? `📦 Deliver Goods (${item.stockPicking.name}) →`
                         : `🔒 Validate Bill First to Deliver Stock`}
                     </Text>

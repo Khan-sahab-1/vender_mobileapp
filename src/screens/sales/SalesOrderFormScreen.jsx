@@ -1,6 +1,8 @@
 import React, { useLayoutEffect, useState, useMemo, useEffect } from 'react';
 import {
   Alert,
+  FlatList,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import ScreenContainer from '../../components/ScreenContainer';
 import Button from '../../components/Button';
 import PickerModal from '../../components/PickerModal';
@@ -166,6 +169,13 @@ export default function SalesOrderFormScreen({ navigation, route }) {
             productId: l.productId || l.product?.id,
             productName: l.productName || l.product?.name || l.description || 'Sales Item',
             quantity: Number(l.quantity || 1),
+            orderedQuantity: Number(l.orderedQuantity || l.quantity || 1),
+            invoicedQuantity: Number(l.invoicedQuantity || 0),
+            remainingQuantity: Number(
+              l.remainingQuantity !== undefined
+                ? l.remainingQuantity
+                : Math.max(0, (l.orderedQuantity || l.quantity || 1) - (l.invoicedQuantity || 0)),
+            ),
             unitPrice: Number(l.unitPrice || 0),
             discount: Number(l.discount || 0),
             taxId: l.taxId || l.tax?.id || null,
@@ -179,6 +189,9 @@ export default function SalesOrderFormScreen({ navigation, route }) {
             productId: null,
             productName: '',
             quantity: 1,
+            orderedQuantity: 1,
+            invoicedQuantity: 0,
+            remainingQuantity: 1,
             unitPrice: 0,
             discount: 0,
             taxId: null,
@@ -202,6 +215,11 @@ export default function SalesOrderFormScreen({ navigation, route }) {
   const [isDatePickerVisible, setDatePickerVisibility] = useState(false);
   const [activeDateField, setActiveDateField] = useState('orderDate');
 
+  const [invoicesModalVisible, setInvoicesModalVisible] = useState(false);
+  const [billsViewMode, setBillsViewMode] = useState('list'); // 'list' | 'grid'
+  const [partialInvoiceModalVisible, setPartialInvoiceModalVisible] = useState(false);
+  const [partialInvoiceLines, setPartialInvoiceLines] = useState([]);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -268,6 +286,13 @@ export default function SalesOrderFormScreen({ navigation, route }) {
                 productId: l.productId || l.product?.id,
                 productName: l.productName || l.product?.name || l.description || 'Sales Item',
                 quantity: Number(l.quantity || 1),
+                orderedQuantity: Number(l.orderedQuantity || l.quantity || 1),
+                invoicedQuantity: Number(l.invoicedQuantity || 0),
+                remainingQuantity: Number(
+                  l.remainingQuantity !== undefined
+                    ? l.remainingQuantity
+                    : Math.max(0, (l.orderedQuantity || l.quantity || 1) - (l.invoicedQuantity || 0)),
+                ),
                 unitPrice: Number(l.unitPrice || 0),
                 discount: Number(l.discount || 0),
                 taxId: l.taxId || l.tax?.id || null,
@@ -613,26 +638,236 @@ export default function SalesOrderFormScreen({ navigation, route }) {
     }
   };
 
+  // Open Partial Invoicing Modal (Tarika B: Manual Partial Invoicing)
+  const openPartialInvoiceModal = () => {
+    if (!currentOrder) return;
+    const orderLines = currentOrder.lines || lines || [];
+    const modalLines = orderLines.map((l, idx) => {
+      const ordered = Number(l.orderedQuantity || l.quantity || 1);
+      const invoiced = Number(l.invoicedQuantity || 0);
+      const remaining = Number(
+        l.remainingQuantity !== undefined
+          ? l.remainingQuantity
+          : Math.max(0, ordered - invoiced),
+      );
+      const unitPrice = Number(l.unitPrice || 0);
+      const taxRate = l.taxRate || (l.tax ? (Number(l.tax.amount) || 0) / 100 : 0);
+      return {
+        id: l.id || `line-${idx}`,
+        lineId: l.id,
+        productId: l.productId || l.product?.id,
+        productName: l.productName || l.product?.name || l.description || 'Sales Item',
+        uom: l.uom || l.product?.uom?.name || 'Units',
+        orderedQuantity: ordered,
+        invoicedQuantity: invoiced,
+        remainingQuantity: remaining,
+        unitPrice,
+        taxRate,
+        taxId: l.taxId || l.tax?.id || null,
+        taxName: l.taxName || l.tax?.name || (taxRate ? `${taxRate * 100}%` : null),
+        discount: Number(l.discount || 0),
+        selected: remaining > 0,
+        invoicingQty: remaining > 0 ? String(remaining) : '0',
+      };
+    });
+    setPartialInvoiceLines(modalLines);
+    setPartialInvoiceModalVisible(true);
+  };
+
+  const toggleSelectPartialLine = id => {
+    setPartialInvoiceLines(prev =>
+      prev.map(l => (l.id === id ? { ...l, selected: !l.selected } : l)),
+    );
+  };
+
+  const updatePartialInvoicingQty = (id, text) => {
+    const clean = text.replace(/[^0-9.]/g, '');
+    setPartialInvoiceLines(prev =>
+      prev.map(l => (l.id === id ? { ...l, invoicingQty: clean } : l)),
+    );
+  };
+
+  const stepPartialInvoicingQty = (id, delta) => {
+    setPartialInvoiceLines(prev =>
+      prev.map(l => {
+        if (l.id !== id) return l;
+        const cur = Number(l.invoicingQty) || 0;
+        const next = Math.max(0, cur + delta);
+        return { ...l, invoicingQty: String(next) };
+      }),
+    );
+  };
+
+  const setMaxPartialQty = id => {
+    setPartialInvoiceLines(prev =>
+      prev.map(l =>
+        l.id === id
+          ? {
+              ...l,
+              invoicingQty: String(Math.max(1, l.remainingQuantity || 1)),
+              selected: true,
+            }
+          : l,
+      ),
+    );
+  };
+
+  const partialInvoiceTotals = useMemo(() => {
+    let untaxed = 0;
+    let taxTotal = 0;
+    let totalQty = 0;
+    partialInvoiceLines.forEach(l => {
+      if (!l.selected) return;
+      const qty = Number(l.invoicingQty) || 0;
+      if (qty <= 0) return;
+      totalQty += qty;
+      const base = qty * l.unitPrice;
+      const disc = base * ((Number(l.discount) || 0) / 100);
+      const taxable = base - disc;
+      const tx = taxable * (Number(l.taxRate) || 0);
+      untaxed += taxable;
+      taxTotal += tx;
+    });
+    return {
+      untaxed,
+      tax: taxTotal,
+      total: untaxed + taxTotal,
+      totalQty,
+    };
+  }, [partialInvoiceLines]);
+
+  const handleConfirmCreatePartialInvoice = async () => {
+    if (!currentOrder?.id) return;
+    const selectedItems = partialInvoiceLines.filter(
+      l => l.selected && Number(l.invoicingQty) > 0,
+    );
+
+    if (selectedItems.length === 0) {
+      Alert.alert(
+        'No Items to Invoice',
+        'Please select at least one item with a quantity greater than 0 to generate a Customer Bill.',
+      );
+      return;
+    }
+
+    const exceeds = selectedItems.find(
+      l => l.remainingQuantity > 0 && Number(l.invoicingQty) > l.remainingQuantity,
+    );
+    if (exceeds) {
+      Alert.alert(
+        'Quantity Exceeds Remaining',
+        `Invoicing quantity for "${exceeds.productName}" (${exceeds.invoicingQty}) is greater than remaining quantity (${exceeds.remainingQuantity}).\n\nWould you like to proceed anyway?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Proceed',
+            onPress: () => submitPartialInvoice(selectedItems),
+          },
+        ],
+      );
+      return;
+    }
+
+    await submitPartialInvoice(selectedItems);
+  };
+
+  const submitPartialInvoice = async selectedItems => {
+    setCreatingInvoice(true);
+    try {
+      const payload = {
+        lines: selectedItems.map(l => ({
+          lineId: l.lineId,
+          productId: l.productId,
+          quantity: Number(l.invoicingQty),
+          unitPrice: l.unitPrice,
+        })),
+      };
+      const updated = await salesApi.createInvoice(currentOrder.id, payload);
+      setPartialInvoiceModalVisible(false);
+      setCurrentOrder(updated);
+
+      if (Array.isArray(updated.lines) && updated.lines.length > 0) {
+        setLines(
+          updated.lines.map((l, idx) => {
+            const rate = l.tax ? (Number(l.tax.amount) || 0) / 100 : 0;
+            return {
+              id: l.id || `line-${idx}`,
+              productId: l.productId || l.product?.id,
+              productName: l.productName || l.product?.name || l.description || 'Sales Item',
+              quantity: Number(l.quantity || 1),
+              orderedQuantity: Number(l.orderedQuantity || l.quantity || 1),
+              invoicedQuantity: Number(l.invoicedQuantity || 0),
+              remainingQuantity: Number(
+                l.remainingQuantity !== undefined
+                  ? l.remainingQuantity
+                  : Math.max(0, (l.orderedQuantity || l.quantity || 1) - (l.invoicedQuantity || 0)),
+              ),
+              unitPrice: Number(l.unitPrice || 0),
+              discount: Number(l.discount || 0),
+              taxId: l.taxId || l.tax?.id || null,
+              taxRate: rate,
+              taxName: l.tax?.name || (l.tax?.amount ? `${l.tax.amount}%` : null),
+            };
+          }),
+        );
+      }
+
+      const newBill = updated.customerInvoices?.[0] || updated.customerInvoice;
+      Alert.alert(
+        'Customer Bill Created!',
+        `Customer Bill (${newBill?.invoiceNumber || 'Draft Bill'}) for ${currency} ${Number(newBill?.amountTotal || partialInvoiceTotals.total).toLocaleString('en-IN', { minimumFractionDigits: 2 })} has been created!`,
+        [
+          { text: 'Stay Here', style: 'cancel' },
+          {
+            text: 'Open Customer Bill',
+            onPress: () => {
+              if (newBill) {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+                  invoice: newBill,
+                  invoiceId: newBill.id,
+                });
+              } else {
+                navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
+              }
+            },
+          },
+        ],
+      );
+    } catch (err) {
+      Alert.alert('Error', err?.response?.data?.message || 'Failed to create Customer Bill');
+    } finally {
+      setCreatingInvoice(false);
+    }
+  };
+
   // Deliver Goods (Deduct Stock)
   const handleDeliverGoods = async () => {
     if (!currentOrder?.id) return;
-    const billState = currentOrder.customerInvoice?.state?.toLowerCase();
-    const isBillValidated =
-      billState === 'open' || billState === 'posted' || billState === 'paid';
+    const isAnyBillValidated =
+      currentOrder?.customerInvoices && currentOrder.customerInvoices.length > 0
+        ? currentOrder.customerInvoices.some(inv => {
+            const s = inv.state?.toLowerCase();
+            return s === 'open' || s === 'posted' || s === 'paid';
+          })
+        : currentOrder.customerInvoice?.state === 'open' ||
+          currentOrder.customerInvoice?.state === 'posted' ||
+          currentOrder.customerInvoice?.state === 'paid';
 
-    if (!isBillValidated) {
+    if (!isAnyBillValidated) {
       Alert.alert(
         'Invoice Validation Required',
-        `Stock delivery cannot be validated yet!\n\nThe Customer Bill (${currentOrder.customerInvoice?.invoiceNumber || 'Draft'}) must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
+        `Stock delivery cannot be validated yet!\n\nAt least one Customer Bill must be validated before physical goods can be delivered out of warehouse stock.\n\nWould you like to open and validate the Customer Bill now?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Open Customer Bill',
             onPress: () => {
-              if (currentOrder.customerInvoice) {
+              const targetBill =
+                currentOrder.customerInvoices?.[0] || currentOrder.customerInvoice;
+              if (targetBill) {
                 navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                  invoice: currentOrder.customerInvoice,
-                  invoiceId: currentOrder.customerInvoice.id,
+                  invoice: targetBill,
+                  invoiceId: targetBill.id,
                 });
               } else {
                 navigation.navigate(navigationScreen.CUSTOMER_INVOICES);
@@ -661,9 +896,174 @@ export default function SalesOrderFormScreen({ navigation, route }) {
 
   const currentState =
     currentOrder?.state === 'sale' ? 'approved' : currentOrder?.state || 'draft';
-  const billState = currentOrder?.customerInvoice?.state?.toLowerCase();
-  const isBillValidated =
-    billState === 'open' || billState === 'posted' || billState === 'paid';
+  const anyBillValidated =
+    currentOrder?.customerInvoices && currentOrder.customerInvoices.length > 0
+      ? currentOrder.customerInvoices.some(inv => {
+          const s = inv.state?.toLowerCase();
+          return s === 'open' || s === 'posted' || s === 'paid';
+        })
+      : currentOrder?.customerInvoice?.state === 'open' ||
+        currentOrder?.customerInvoice?.state === 'posted' ||
+        currentOrder?.customerInvoice?.state === 'paid';
+
+  const isBillValidated = anyBillValidated;
+
+  const billsList =
+    currentOrder?.customerInvoices && currentOrder.customerInvoices.length > 0
+      ? currentOrder.customerInvoices
+      : currentOrder?.customerInvoice
+      ? [currentOrder.customerInvoice]
+      : [];
+
+  const renderBillsListItem = ({ item }) => {
+    const isCompleted = item.state === 'open' || item.state === 'posted' || item.state === 'paid';
+    const linesStr = (item.lines || [])
+      .map(l => `${l.product?.name || l.description || 'Product'} (${Number(l.quantity || 1)})`)
+      .join(', ');
+
+    return (
+      <TouchableOpacity
+        style={[styles.invoiceCard, shadows.xs]}
+        activeOpacity={0.7}
+        onPress={() => {
+          setInvoicesModalVisible(false);
+          navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+            invoice: item,
+            invoiceId: item.id,
+          });
+        }}>
+        {/* Top: Bill Number + State */}
+        <View style={styles.invoiceCardTop}>
+          <View style={{ flex: 1, marginRight: spacing.xs }}>
+            <Text style={styles.invoiceCardNum}>
+              {item.invoiceNumber || 'Draft Customer Bill'}
+            </Text>
+            <Text style={styles.invoiceCardDate}>
+              📅 Bill Date: {formatDate(item.invoiceDate || item.createdAt) || 'Today'}
+              {item.dueDate ? ` · Due: ${formatDate(item.dueDate)}` : ''}
+            </Text>
+          </View>
+          <StateBadge state={item.state} />
+        </View>
+
+        {/* Lock / Draft Status Tag */}
+        <View
+          style={[
+            styles.billLockTag,
+            isCompleted ? styles.billLockTagCompleted : styles.billLockTagDraft,
+          ]}>
+          <Text
+            style={[
+              styles.billLockTagText,
+              isCompleted
+                ? styles.billLockTagTextCompleted
+                : styles.billLockTagTextDraft,
+            ]}>
+            {isCompleted
+              ? '🔒 Completed & Posted to Ledger (Locked / Read-Only)'
+              : '✏️ Draft Bill (Can Edit Quantities & Validate)'}
+          </Text>
+        </View>
+
+        {/* Billed Items Preview */}
+        {linesStr ? (
+          <View style={styles.billedItemsPreview}>
+            <Text style={styles.billedItemsPreviewText} numberOfLines={2}>
+              📦 Billed: {linesStr}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Bottom Amounts */}
+        <View style={styles.invoiceCardBottom}>
+          <Text style={styles.invoiceCardAmount}>
+            Total: {currency}{' '}
+            {Number(item.amountTotal || 0).toLocaleString('en-IN', {
+              minimumFractionDigits: 2,
+            })}
+          </Text>
+          <Text style={styles.invoiceCardArrow}>
+            {isCompleted ? 'View Bill & Voucher ›' : 'Edit / Validate ›'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderBillsGridCard = ({ item }) => {
+    const isCompleted = item.state === 'open' || item.state === 'posted' || item.state === 'paid';
+    const linesStr = (item.lines || [])
+      .map(l => `${l.product?.name || l.description || 'Product'} (${Number(l.quantity || 1)})`)
+      .join(', ');
+
+    return (
+      <TouchableOpacity
+        style={[styles.invoiceGridCard, shadows.sm]}
+        activeOpacity={0.7}
+        onPress={() => {
+          setInvoicesModalVisible(false);
+          navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
+            invoice: item,
+            invoiceId: item.id,
+          });
+        }}>
+        <View style={styles.cardHeader}>
+          <View style={{ flex: 1, marginRight: spacing.xs }}>
+            <Text style={styles.billNumber}>{item.invoiceNumber || 'Draft Bill'}</Text>
+            <Text style={styles.billDate}>
+              📅 {formatDate(item.invoiceDate || item.createdAt) || 'Today'}
+            </Text>
+          </View>
+          <StateBadge state={item.state} />
+        </View>
+
+        <View
+          style={[
+            styles.billLockTag,
+            isCompleted ? styles.billLockTagCompleted : styles.billLockTagDraft,
+            { marginTop: 4 },
+          ]}>
+          <Text
+            style={[
+              styles.billLockTagText,
+              isCompleted
+                ? styles.billLockTagTextCompleted
+                : styles.billLockTagTextDraft,
+            ]}>
+            {isCompleted ? '🔒 Validated & Locked' : '✏️ Draft (Editable)'}
+          </Text>
+        </View>
+
+        {linesStr ? (
+          <View style={[styles.billedItemsPreview, { marginTop: 6 }]}>
+            <Text style={styles.billedItemsPreviewText} numberOfLines={2}>
+              📦 {linesStr}
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.cardDivider} />
+
+        <View style={styles.cardFooter}>
+          <View>
+            <Text style={styles.amountLabel}>Total Billed</Text>
+            <Text style={styles.amountTotal}>
+              {currency}{' '}
+              {Number(item.amountTotal || 0).toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+              })}
+            </Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.amountLabel}>Status</Text>
+            <Text style={[styles.actionText, { fontSize: 12 }]}>
+              {isCompleted ? 'View Ledger ›' : 'Validate ›'}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <ScreenContainer>
@@ -727,20 +1127,23 @@ export default function SalesOrderFormScreen({ navigation, route }) {
             </View>
 
             {/* Direct Bill Linked Button */}
-            {currentOrder?.customerInvoice && (
+            {((currentOrder?.customerInvoices && currentOrder.customerInvoices.length > 0) || currentOrder?.customerInvoice) ? (
               <TouchableOpacity
                 style={styles.linkedBillBtn}
-                onPress={() =>
-                  navigation.navigate(navigationScreen.CUSTOMER_INVOICE_DETAIL, {
-                    invoice: currentOrder.customerInvoice,
-                    invoiceId: currentOrder.customerInvoice.id,
-                  })
-                }>
+                onPress={() => setInvoicesModalVisible(true)}>
                 <Text style={styles.linkedBillBtnText}>
-                  🧾 View Generated Customer Bill: {currentOrder.customerInvoice.invoiceNumber || 'Draft Bill'} ›
+                  🧾 View Customer Bills ({(currentOrder.customerInvoices?.length || (currentOrder.customerInvoice ? 1 : 0))}) ›
                 </Text>
               </TouchableOpacity>
-            )}
+            ) : (currentState === 'approved' || currentState === 'sale') ? (
+              <TouchableOpacity
+                style={styles.linkedBillBtnOutline}
+                onPress={openPartialInvoiceModal}>
+                <Text style={styles.linkedBillBtnOutlineText}>
+                  🛒 + Create First Customer Bill (Invoicing Cart) ›
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
             {/* Linked Delivery Order & Goods Dispatch */}
             {currentOrder?.stockPicking && (
@@ -767,7 +1170,7 @@ export default function SalesOrderFormScreen({ navigation, route }) {
                   <TouchableOpacity
                     style={[
                       styles.btnReceiveGoods,
-                      !isBillValidated && styles.btnReceiveGoodsLocked,
+                      !anyBillValidated && styles.btnReceiveGoodsLocked,
                     ]}
                     activeOpacity={0.8}
                     disabled={actionLoading}
@@ -775,11 +1178,11 @@ export default function SalesOrderFormScreen({ navigation, route }) {
                     <Text
                       style={[
                         styles.btnReceiveGoodsText,
-                        !isBillValidated && styles.btnReceiveGoodsTextLocked,
+                        !anyBillValidated && styles.btnReceiveGoodsTextLocked,
                       ]}>
                       {actionLoading
                         ? 'Delivering...'
-                        : isBillValidated
+                        : anyBillValidated
                         ? '📦 Deliver Goods (Update Warehouse Stock) ✓'
                         : '🔒 Validate Bill First to Deliver Stock'}
                     </Text>
@@ -1029,6 +1432,28 @@ export default function SalesOrderFormScreen({ navigation, route }) {
                     <Text style={styles.triggerChevron}>⌄</Text>
                   </TouchableOpacity>
 
+                  {currentState === 'approved' ? (
+                    <View
+                      style={[
+                        styles.invoicedBadgeWrap,
+                        (l.remainingQuantity ?? Math.max(0, (l.orderedQuantity || l.quantity) - (l.invoicedQuantity || 0))) === 0
+                          ? styles.invoicedBadgeComplete
+                          : styles.invoicedBadgePending,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.invoicedBadgeText,
+                          (l.remainingQuantity ?? Math.max(0, (l.orderedQuantity || l.quantity) - (l.invoicedQuantity || 0))) === 0
+                            ? styles.invoicedBadgeTextComplete
+                            : styles.invoicedBadgeTextPending,
+                        ]}>
+                        {(l.remainingQuantity ?? Math.max(0, (l.orderedQuantity || l.quantity) - (l.invoicedQuantity || 0))) === 0
+                          ? `✓ Fully Invoiced (${l.invoicedQuantity || l.quantity} / ${l.orderedQuantity || l.quantity})`
+                          : `📦 Invoiced: ${l.invoicedQuantity || 0} / ${l.orderedQuantity || l.quantity} (Remaining: ${l.remainingQuantity ?? Math.max(0, (l.orderedQuantity || l.quantity) - (l.invoicedQuantity || 0))})`}
+                      </Text>
+                    </View>
+                  ) : null}
+
                   {lines.length > 1 && (
                     <TouchableOpacity
                       onPress={() => handleRemoveLine(l.id)}
@@ -1236,14 +1661,431 @@ export default function SalesOrderFormScreen({ navigation, route }) {
           )}
 
           {isEditing && (currentState === 'approved' || currentState === 'sale') && (
-            <View style={styles.receiptDoneBanner}>
-              <Text style={styles.receiptDoneBannerText}>
-                ✓ Sale Order Approved & Confirmed
-              </Text>
+            <View style={{ gap: spacing.sm }}>
+              <View style={styles.receiptDoneBanner}>
+                <Text style={styles.receiptDoneBannerText}>
+                  ✓ Sale Order Approved & Confirmed
+                </Text>
+              </View>
+
+              <Button
+                title={
+                  creatingInvoice
+                    ? 'Generating Customer Bill...'
+                    : currentOrder?.isFullyInvoiced
+                    ? '✓ All Items Invoiced (+ Extra Bill)'
+                    : currentOrder?.customerInvoices && currentOrder.customerInvoices.length > 0
+                    ? '🛒 Open Invoicing Cart (+ Another Bill)'
+                    : '🛒 Open Invoicing Cart (+ Create Bill)'
+                }
+                variant={currentOrder?.isFullyInvoiced ? 'outline' : 'primary'}
+                loading={creatingInvoice}
+                onPress={openPartialInvoiceModal}
+              />
             </View>
           )}
         </View>
       </ScrollView>
+
+      {/* All Linked Customer Invoices Modal with List & Grid Mode */}
+      <Modal
+        visible={invoicesModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setInvoicesModalVisible(false)}>
+        <SafeAreaView style={styles.modalSafe} edges={['top', 'bottom', 'left', 'right']}>
+          {/* Modal Header */}
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalHeaderTitle}>
+                Customer Bills ({billsList.length})
+              </Text>
+              <Text style={styles.modalSubtitle}>
+                {currentOrder?.soNumber || currentOrder?.name || 'Sales Order'} • Linked Customer Bills
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setInvoicesModalVisible(false)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.modalCloseText}>✕ Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* SO Invoicing Progress Banner */}
+          <View style={styles.soBillingProgressCard}>
+            <View style={styles.soProgressRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.soProgressTitle}>SO BILLING PROGRESS</Text>
+                <Text style={styles.soProgressAmount}>
+                  Billed: {currency}{' '}
+                  {Number(currentOrder?.totalInvoicedAmount || 0).toLocaleString(
+                    'en-IN',
+                    { minimumFractionDigits: 2 },
+                  )}{' '}
+                  / {currency}{' '}
+                  {Number(
+                    currentOrder?.amountTotal || currentOrder?.totalAmount || 0,
+                  ).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
+              <View>
+                {currentOrder?.isFullyInvoiced ? (
+                  <View style={styles.badgeDone}>
+                    <Text style={styles.badgeDoneText}>✓ Fully Invoiced</Text>
+                  </View>
+                ) : (
+                  <View style={styles.badgePending}>
+                    <Text style={styles.badgePendingText}>
+                      Rem: {currency}{' '}
+                      {Number(
+                        currentOrder?.remainingAmountToInvoice || 0,
+                      ).toLocaleString('en-IN', {
+                        minimumFractionDigits: 2,
+                      })}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          </View>
+
+          {/* View Mode Toggle Row */}
+          <View style={styles.modalViewToggleRow}>
+            <Text style={styles.modalViewCount}>
+              {billsList.length}{' '}
+              {billsList.length === 1 ? 'Customer Bill' : 'Customer Bills'}
+            </Text>
+            <View style={styles.toggleButtonGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.viewToggleBtn,
+                  billsViewMode === 'list' && styles.viewToggleBtnActive,
+                ]}
+                onPress={() => setBillsViewMode('list')}>
+                <Text
+                  style={[
+                    styles.viewToggleBtnText,
+                    billsViewMode === 'list' && styles.viewToggleBtnTextActive,
+                  ]}>
+                  ☰ List
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.viewToggleBtn,
+                  billsViewMode === 'grid' && styles.viewToggleBtnActive,
+                ]}
+                onPress={() => setBillsViewMode('grid')}>
+                <Text
+                  style={[
+                    styles.viewToggleBtnText,
+                    billsViewMode === 'grid' && styles.viewToggleBtnTextActive,
+                  ]}>
+                  ⊞ Grid
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <FlatList
+            key={billsViewMode}
+            data={billsList}
+            keyExtractor={item => String(item.id)}
+            contentContainerStyle={
+              billsViewMode === 'list'
+                ? styles.invoicesListContainer
+                : styles.invoicesGridContainer
+            }
+            renderItem={
+              billsViewMode === 'list' ? renderBillsListItem : renderBillsGridCard
+            }
+            ListFooterComponent={
+              <View style={{ marginTop: spacing.md, paddingBottom: spacing.xl * 2 }}>
+                {!currentOrder?.isFullyInvoiced ? (
+                  <View style={styles.modalCreateNextBox}>
+                    <Text style={styles.modalCreateNextTitle}>
+                      🛍️ Items Remaining to Bill
+                    </Text>
+                    <Text style={styles.modalCreateNextDesc}>
+                      Order has unbilled quantities. Open cart to create subsequent invoice:
+                    </Text>
+                    <Button
+                      title="🛒 Open Invoicing Cart (+ Create Next Bill)"
+                      variant="primary"
+                      onPress={() => {
+                        setInvoicesModalVisible(false);
+                        openPartialInvoiceModal();
+                      }}
+                    />
+                  </View>
+                ) : (
+                  <View style={styles.modalCompleteBox}>
+                    <Text style={styles.modalCompleteTitle}>
+                      ✓ All Items Fully Invoiced
+                    </Text>
+                    <Text style={styles.modalCompleteDesc}>
+                      All ordered products and quantities on this SO have been invoiced.
+                    </Text>
+                    <Button
+                      title="+ Create Additional Bill (If needed)"
+                      variant="outline"
+                      onPress={() => {
+                        setInvoicesModalVisible(false);
+                        openPartialInvoiceModal();
+                      }}
+                    />
+                  </View>
+                )}
+              </View>
+            }
+          />
+        </SafeAreaView>
+      </Modal>
+
+      {/* Partial Invoicing Modal (Tarika B: Manual Partial Invoicing) */}
+      <Modal
+        visible={partialInvoiceModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setPartialInvoiceModalVisible(false)}>
+        <SafeAreaView style={styles.modalSafe} edges={['top', 'bottom', 'left', 'right']}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalHeaderTitle}>🛒 Invoicing Cart</Text>
+              <Text style={styles.modalSubtitle}>
+                {currentOrder?.soNumber || currentOrder?.name || 'Sales Order'} • Unbilled Items Cart
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setPartialInvoiceModalVisible(false)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <Text style={styles.modalCloseText}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.partialInfoBanner}>
+            <Text style={styles.partialInfoBannerText}>
+              🛍️ Invoicing Cart: Jo products ya quantity bachi hui hai, aap unhe edit karke is bill me shamil kar sakte hain. Bachi hui quantity agle bill ke liye cart me rahegi.
+            </Text>
+          </View>
+
+          <FlatList
+            data={partialInvoiceLines}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.partialListContainer}
+            renderItem={({ item }) => {
+              const isFullyDone = item.remainingQuantity <= 0;
+              const lineTotal =
+                (Number(item.invoicingQty) || 0) *
+                item.unitPrice *
+                (1 - item.discount / 100) *
+                (1 + item.taxRate);
+
+              return (
+                <View
+                  style={[
+                    styles.partialCard,
+                    item.selected && !isFullyDone && styles.partialCardSelected,
+                    isFullyDone && styles.partialCardDisabled,
+                  ]}>
+                  {/* Top: Checkbox + Product Name + Status Badge */}
+                  <View style={styles.partialCardHeader}>
+                    <TouchableOpacity
+                      style={[
+                        styles.partialCheckbox,
+                        item.selected && styles.partialCheckboxActive,
+                        isFullyDone && styles.partialCheckboxDisabled,
+                      ]}
+                      disabled={isFullyDone}
+                      onPress={() => toggleSelectPartialLine(item.id)}>
+                      <Text style={styles.partialCheckboxTick}>
+                        {item.selected ? '✓' : ''}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                      <Text style={styles.partialProductName} numberOfLines={1}>
+                        {item.productName}
+                      </Text>
+                      <Text style={styles.partialUomText}>
+                        Unit: {item.uom} • Price: {currency}{' '}
+                        {item.unitPrice.toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                        })}
+                        {item.taxName ? ` (+${item.taxName} Tax)` : ''}
+                      </Text>
+                    </View>
+
+                    {isFullyDone ? (
+                      <View style={styles.badgeDone}>
+                        <Text style={styles.badgeDoneText}>✓ Done</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.badgePending}>
+                        <Text style={styles.badgePendingText}>
+                          Rem: {item.remainingQuantity}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Quantities summary row */}
+                  <View style={styles.partialStatsRow}>
+                    <View style={styles.partialStatCol}>
+                      <Text style={styles.partialStatLabel}>Ordered</Text>
+                      <Text style={styles.partialStatValue}>
+                        {item.orderedQuantity}
+                      </Text>
+                    </View>
+                    <View style={styles.partialStatDivider} />
+                    <View style={styles.partialStatCol}>
+                      <Text style={styles.partialStatLabel}>Invoiced</Text>
+                      <Text style={styles.partialStatValue}>
+                        {item.invoicedQuantity}
+                      </Text>
+                    </View>
+                    <View style={styles.partialStatDivider} />
+                    <View style={styles.partialStatCol}>
+                      <Text style={styles.partialStatLabel}>Remaining</Text>
+                      <Text
+                        style={[
+                          styles.partialStatValue,
+                          {
+                            color:
+                              item.remainingQuantity > 0 ? '#B45309' : '#059669',
+                          },
+                        ]}>
+                        {item.remainingQuantity}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Invoicing Qty Stepper / Input */}
+                  {!isFullyDone && item.selected && (
+                    <View style={styles.partialInputSection}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text style={styles.partialInputLabel}>
+                          Quantity to Bill Now:
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.cartMaxBtn}
+                          onPress={() => setMaxPartialQty(item.id)}>
+                          <Text style={styles.cartMaxBtnText}>
+                            Max ({item.remainingQuantity})
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={styles.partialQtyRow}>
+                        <TouchableOpacity
+                          style={styles.qtyStepBtn}
+                          onPress={() => stepPartialInvoicingQty(item.id, -1)}>
+                          <Text style={styles.qtyStepBtnText}>-</Text>
+                        </TouchableOpacity>
+
+                        <TextInput
+                          style={styles.partialQtyInput}
+                          keyboardType="numeric"
+                          value={item.invoicingQty}
+                          onChangeText={txt =>
+                            updatePartialInvoicingQty(item.id, txt)
+                          }
+                          selectTextOnFocus
+                        />
+
+                        <TouchableOpacity
+                          style={styles.qtyStepBtn}
+                          onPress={() => stepPartialInvoicingQty(item.id, 1)}>
+                          <Text style={styles.qtyStepBtnText}>+</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <Text style={styles.partialLineTotalLabel}>
+                            Line Total
+                          </Text>
+                          <Text style={styles.partialLineTotalValue}>
+                            {currency}{' '}
+                            {lineTotal.toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              );
+            }}
+            ListFooterComponent={
+              <View style={styles.partialFooterSummary}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Total Items to Bill:</Text>
+                  <Text style={styles.summaryVal}>
+                    {partialInvoiceTotals.totalQty} Units
+                  </Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Untaxed Amount:</Text>
+                  <Text style={styles.summaryVal}>
+                    {currency}{' '}
+                    {partialInvoiceTotals.untaxed.toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Estimated Taxes:</Text>
+                  <Text style={styles.summaryVal}>
+                    {currency}{' '}
+                    {partialInvoiceTotals.tax.toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </Text>
+                </View>
+                <View style={[styles.summaryRow, styles.summaryRowTotal]}>
+                  <Text style={styles.summaryTotalLabel}>Cart Bill Total:</Text>
+                  <Text style={styles.summaryTotalVal}>
+                    {currency}{' '}
+                    {partialInvoiceTotals.total.toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </Text>
+                </View>
+
+                <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                  <Button
+                    title={
+                      creatingInvoice
+                        ? 'Generating Bill...'
+                        : `🧾 Generate Customer Bill from Cart (${currency} ${partialInvoiceTotals.total.toLocaleString(
+                            'en-IN',
+                            {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            },
+                          )})`
+                    }
+                    variant="primary"
+                    loading={creatingInvoice}
+                    disabled={
+                      partialInvoiceTotals.totalQty <= 0 || creatingInvoice
+                    }
+                    onPress={handleConfirmCreatePartialInvoice}
+                  />
+                  <Button
+                    title="Cancel"
+                    variant="outline"
+                    onPress={() => setPartialInvoiceModalVisible(false)}
+                  />
+                </View>
+              </View>
+            }
+          />
+        </SafeAreaView>
+      </Modal>
 
       {/* Dynamic Master Data Picker Modal */}
       <PickerModal
@@ -1764,5 +2606,461 @@ const styles = StyleSheet.create({
   },
   footerActions: {
     marginTop: spacing.xs,
+  },
+  modalSafe: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  modalHeaderTitle: {
+    ...typography.h3,
+    color: colors.text,
+    fontWeight: '800',
+  },
+  modalCloseText: {
+    color: colors.primary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  invoicesListContainer: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  invoiceCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  invoiceCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.xs,
+  },
+  invoiceCardNum: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  invoiceCardDate: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  invoiceCardBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  invoiceCardAmount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  invoiceCardArrow: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  invoicedBadgeWrap: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: radius.xs,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
+  invoicedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  invoicedBadgeComplete: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+    borderWidth: 1,
+  },
+  invoicedBadgePending: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+    borderWidth: 1,
+  },
+  invoicedBadgeTextComplete: {
+    color: '#059669',
+    fontWeight: '800',
+  },
+  invoicedBadgeTextPending: {
+    color: '#B45309',
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  partialInfoBanner: {
+    backgroundColor: '#EFF6FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DBEAFE',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  partialInfoBannerText: {
+    fontSize: 12,
+    color: '#1E40AF',
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  partialListContainer: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  partialCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    ...shadows.xs,
+  },
+  partialCardSelected: {
+    borderColor: colors.primary,
+    backgroundColor: '#FAFCFF',
+  },
+  partialCardDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  partialCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  partialCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  partialCheckboxActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  partialCheckboxDisabled: {
+    backgroundColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
+  },
+  partialCheckboxTick: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  partialProductName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  partialUomText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  badgeDone: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs,
+  },
+  badgeDoneText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  badgePending: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs,
+  },
+  badgePendingText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#B45309',
+  },
+  partialStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: radius.xs,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginTop: 6,
+  },
+  partialStatCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  partialStatLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  partialStatValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.text,
+    marginTop: 1,
+  },
+  partialStatDivider: {
+    width: 1,
+    height: 18,
+    backgroundColor: '#E2E8F0',
+  },
+  partialInputSection: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  partialInputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  partialQtyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qtyStepBtn: {
+    width: 34,
+    height: 34,
+    backgroundColor: '#F1F5F9',
+    borderRadius: radius.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  qtyStepBtnText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.text,
+    lineHeight: 20,
+  },
+  partialQtyInput: {
+    width: 60,
+    height: 34,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderRadius: radius.xs,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
+    paddingVertical: 0,
+  },
+  partialLineTotalLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  partialLineTotalValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  partialFooterSummary: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingBottom: spacing.xl * 2,
+  },
+  cartMaxBtn: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  cartMaxBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2563EB',
+  },
+  linkedBillBtnOutline: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderStyle: 'dashed',
+    borderRadius: radius.xs,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+  },
+  linkedBillBtnOutlineText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  soBillingProgressCard: {
+    backgroundColor: '#EFF6FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DBEAFE',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  soProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  soProgressTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#1E40AF',
+    textTransform: 'uppercase',
+  },
+  soProgressAmount: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E3A8A',
+    marginTop: 2,
+  },
+  modalViewToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    backgroundColor: colors.surfaceSubtle,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  modalViewCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  billLockTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  billLockTagCompleted: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  billLockTagDraft: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  billLockTagText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  billLockTagTextCompleted: {
+    color: '#15803D',
+  },
+  billLockTagTextDraft: {
+    color: '#B45309',
+  },
+  billedItemsPreview: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: radius.xs,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  billedItemsPreviewText: {
+    fontSize: 11,
+    color: colors.text,
+    fontWeight: '600',
+    lineHeight: 15,
+  },
+  invoiceGridCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  invoicesGridContainer: {
+    padding: spacing.md,
+  },
+  modalCreateNextBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    gap: spacing.xs,
+  },
+  modalCreateNextTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1E3A8A',
+  },
+  modalCreateNextDesc: {
+    fontSize: 12,
+    color: '#1E40AF',
+    marginBottom: 6,
+  },
+  modalCompleteBox: {
+    backgroundColor: '#ECFDF5',
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  modalCompleteTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#065F46',
+  },
+  modalCompleteDesc: {
+    fontSize: 12,
+    color: '#047857',
+    textAlign: 'center',
+    marginBottom: 6,
   },
 });
